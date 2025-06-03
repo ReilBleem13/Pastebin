@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"pastebin/pkg/helpers"
@@ -25,7 +26,6 @@ type request struct {
 }
 
 func (h *Handler) CreateOne(c *gin.Context) {
-
 	var req request
 	if err := c.BindJSON(&req); err != nil {
 		c.String(400, err.Error())
@@ -42,11 +42,22 @@ func (h *Handler) CreateOne(c *gin.Context) {
 		Data:     reqData,
 	}
 
-	link, err := h.servises.CreateOne(fileData)
+	link, err := h.servises.Minio.CreateOne(fileData)
 	if err != nil {
-		// Если не удается сохранить файл, возвращаем ошибку с соответствующим статусом и сообщением
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Status:  http.StatusInternalServerError,
+		c.JSON(500, ErrorResponse{
+			Status:  500,
+			Error:   "Unable to save the file",
+			Details: err,
+		})
+		return
+	}
+
+	h := sha256.New()
+
+	err = h.servises.DBMinio.CreateLink(objectID, link)
+	if err != nil {
+		c.JSON(500, ErrorResponse{
+			Status:  501,
 			Error:   "Unable to save the file",
 			Details: err,
 		})
@@ -56,8 +67,26 @@ func (h *Handler) CreateOne(c *gin.Context) {
 	c.JSON(http.StatusOK, SuccessResponse{
 		Status:  http.StatusOK,
 		Message: "File uploaded successfully",
-		Data:    link, // URL-адрес загруженного файла
+		Data:    objectID,
 	})
 }
 
-func (h *Handler) GetOne(c *gin.Context) {}
+func (h *Handler) GetOne(c *gin.Context) {
+	objectID := c.Param("objectID")
+
+	link, err := h.servises.GetOne(objectID)
+	if err != nil {
+		c.JSON(500, ErrorResponse{
+			Status:  500,
+			Error:   "Enable to get the object",
+			Details: err,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, SuccessResponse{
+		Status:  http.StatusOK,
+		Message: "File received successfully",
+		Data:    link,
+	})
+}

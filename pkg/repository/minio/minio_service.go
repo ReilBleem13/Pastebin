@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"pastebin/pkg/helpers"
 	"sync"
 	"time"
@@ -14,7 +15,7 @@ import (
 
 func (m *minioClient) CreateOne(file helpers.FileDataType) (string, error) {
 	objectID := uuid.New().String()
-
+	log.Println(objectID)
 	reader := bytes.NewReader(file.Data)
 
 	_, err := m.mc.PutObject(

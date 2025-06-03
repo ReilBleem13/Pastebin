@@ -23,7 +23,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 
 	{
 		minioRoutes.POST("/", h.CreateOne)
-		// minioRoutes.GET("/:objectID", h.GetOne)
+		minioRoutes.GET("/:objectID", h.GetOne)
 	}
 	return router
 }
