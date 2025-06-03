@@ -2,7 +2,8 @@ package handler
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/hex"
+	"log"
 	"net/http"
 	"pastebin/pkg/helpers"
 
@@ -25,6 +26,10 @@ type request struct {
 	Message string `json:"message"`
 }
 
+const (
+	urlForGet = "http://localhost:8080/files/"
+)
+
 func (h *Handler) CreateOne(c *gin.Context) {
 	var req request
 	if err := c.BindJSON(&req); err != nil {
@@ -32,17 +37,16 @@ func (h *Handler) CreateOne(c *gin.Context) {
 		return
 	}
 
-	reqData, err := json.Marshal(req)
-	if err != nil {
-		c.String(400, err.Error())
-	}
+	log.Println("1::", req.Message)
+	reqData := []byte(req.Message)
+	log.Println("1::", reqData)
 
 	fileData := helpers.FileDataType{
 		FileName: "first-file",
 		Data:     reqData,
 	}
 
-	link, err := h.servises.Minio.CreateOne(fileData)
+	objectID, err := h.servises.Minio.CreateOne(fileData)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
 			Status:  500,
@@ -52,12 +56,13 @@ func (h *Handler) CreateOne(c *gin.Context) {
 		return
 	}
 
-	h := sha256.New()
+	hash := sha256.Sum256([]byte(objectID))
+	hashStr := hex.EncodeToString(hash[:])
 
-	err = h.servises.DBMinio.CreateLink(objectID, link)
+	err = h.servises.DBMinio.CreateLink(objectID, hashStr)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
-			Status:  501,
+			Status:  500,
 			Error:   "Unable to save the file",
 			Details: err,
 		})
@@ -67,17 +72,26 @@ func (h *Handler) CreateOne(c *gin.Context) {
 	c.JSON(http.StatusOK, SuccessResponse{
 		Status:  http.StatusOK,
 		Message: "File uploaded successfully",
-		Data:    objectID,
+		Data:    urlForGet + hashStr,
 	})
 }
 
 func (h *Handler) GetOne(c *gin.Context) {
-	objectID := c.Param("objectID")
+	hash := c.Param("objectID")
+
+	objectID, err := h.servises.DBMinio.GetLink(hash)
+	if err != nil {
+		c.JSON(500, ErrorResponse{
+			Status:  501,
+			Error:   "Enable to get objectdID",
+			Details: err,
+		})
+	}
 
 	link, err := h.servises.GetOne(objectID)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
-			Status:  500,
+			Status:  502,
 			Error:   "Enable to get the object",
 			Details: err,
 		})

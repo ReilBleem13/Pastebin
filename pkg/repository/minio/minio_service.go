@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"pastebin/pkg/helpers"
 	"sync"
@@ -14,15 +15,15 @@ import (
 )
 
 func (m *minioClient) CreateOne(file helpers.FileDataType) (string, error) {
-	objectID := uuid.New().String()
+	objectID := uuid.New().String() + ".txt"
 	log.Println(objectID)
-	reader := bytes.NewReader(file.Data)
+	content := bytes.NewReader(file.Data)
 
 	_, err := m.mc.PutObject(
 		context.Background(),
 		m.cfg.BucketName,
 		objectID,
-		reader,
+		content,
 		int64(len(file.Data)),
 		minio.PutObjectOptions{},
 	)
@@ -30,11 +31,12 @@ func (m *minioClient) CreateOne(file helpers.FileDataType) (string, error) {
 		return "", fmt.Errorf("error occured while creating object %s: %v", file.FileName, err)
 	}
 
-	url, err := m.mc.PresignedGetObject(context.Background(), m.cfg.BucketName, objectID, time.Second*24*60*60, nil)
-	if err != nil {
-		return "", fmt.Errorf("error occured while creating URL for object %s: %v", file.FileName, err)
-	}
-	return url.String(), nil
+	// url, err := m.mc.PresignedGetObject(context.Background(), m.cfg.BucketName, objectID, time.Second*24*60*60, nil)
+	// if err != nil {
+	// 	return "", fmt.Errorf("error occured while creating URL for object %s: %v", file.FileName, err)
+	// }
+
+	return objectID, nil
 }
 
 func (m *minioClient) CreateMany(data map[string]helpers.FileDataType) ([]string, error) {
@@ -88,17 +90,29 @@ func (m *minioClient) CreateMany(data map[string]helpers.FileDataType) ([]string
 }
 
 func (m *minioClient) GetOne(objectID string) (string, error) {
-	url, err := m.mc.PresignedGetObject(
-		context.Background(),
-		m.cfg.BucketName,
-		objectID,
-		time.Second*24*60*60,
-		nil,
-	)
+	// url, err := m.mc.PresignedGetObject(
+	// 	context.Background(),
+	// 	m.cfg.BucketName,
+	// 	objectID,
+	// 	time.Second*24*60*60,
+	// 	nil,
+	// )
+	// if err != nil {
+	// 	return "", fmt.Errorf("error occured while getting URL for object %s: %v", objectID, err)
+	// }
+	// return url.String(), nil
+
+	file, err := m.mc.GetObject(context.Background(), m.cfg.BucketName, objectID, minio.GetObjectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("error occured while getting URL for object %s: %v", objectID, err)
 	}
-	return url.String(), nil
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf("error occured while reading file: %v", err)
+	}
+
+	return string(data), nil
 }
 
 func (m *minioClient) GetMany(objectIDs []string) ([]string, error) {

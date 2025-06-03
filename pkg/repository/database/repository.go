@@ -5,8 +5,8 @@ import "github.com/jmoiron/sqlx"
 type Authorization interface{}
 
 type Minio interface {
-	CreateLink(objectID, url string) error
-	GetLink(objectID string) (string, error)
+	CreateLink(objectID, hash string) error
+	GetLink(hash string) (string, error)
 }
 
 type Repository struct {

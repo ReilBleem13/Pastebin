@@ -15,8 +15,8 @@ func NewMinioService(minio minio.Client) *MinioService {
 	}
 }
 
-func (m *MinioService) CreateOne(objectID string, file helpers.FileDataType) (string, error) {
-	return m.client.CreateOne(objectID, file)
+func (m *MinioService) CreateOne(file helpers.FileDataType) (string, error) {
+	return m.client.CreateOne(file)
 }
 
 func (m *MinioService) CreateMany(files map[string]helpers.FileDataType) ([]string, error) {

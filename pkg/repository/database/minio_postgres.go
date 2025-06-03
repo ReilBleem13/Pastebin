@@ -14,17 +14,17 @@ func NewMinioPostgres(db *sqlx.DB) *MinioPostgres {
 	return &MinioPostgres{db: db}
 }
 
-func (m *MinioPostgres) CreateLink(objectID, url string) error {
-	_, err := m.db.Exec(fmt.Sprintf("INSERT INTO %s (object_id, url_name) VALUES($1, $2)", linksTables), objectID, url)
+func (m *MinioPostgres) CreateLink(objectID, hash string) error {
+	_, err := m.db.Exec(fmt.Sprintf("INSERT INTO %s (object_name, object_hash) VALUES($1, $2)", linksTables), objectID, hash)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (m *MinioPostgres) GetLink(objectID string) (string, error) {
+func (m *MinioPostgres) GetLink(hash string) (string, error) {
 	var url string
-	if err := m.db.Get(&url, fmt.Sprintf("SELECT url_name FROM %s WHERE object_id", linksTables)); err != nil {
+	if err := m.db.Get(&url, fmt.Sprintf("SELECT object_name FROM %s WHERE object_hash = $1", linksTables), hash); err != nil {
 		return "", err
 	}
 	return url, nil
