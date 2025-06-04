@@ -3,6 +3,7 @@ package minio
 import (
 	"context"
 	"pastebin/pkg/helpers"
+	"pastebin/pkg/models"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -20,7 +21,7 @@ var AppConfig *Config
 
 type Client interface {
 	InitMinio() error
-	CreateOne(file helpers.FileDataType) (string, error)
+	CreateOne(data []byte) (models.Paste, error)
 	CreateMany(map[string]helpers.FileDataType) ([]string, error)
 	GetOne(objectID string) (string, error)
 	GetMany(objectIDs []string) ([]string, error)

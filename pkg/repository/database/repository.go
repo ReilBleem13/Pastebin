@@ -1,12 +1,17 @@
 package database
 
-import "github.com/jmoiron/sqlx"
+import (
+	"pastebin/pkg/models"
+
+	"github.com/jmoiron/sqlx"
+)
 
 type Authorization interface{}
 
 type Minio interface {
-	CreateLink(objectID, hash string) error
+	CreatePasta(pasta models.Paste) error
 	GetLink(hash string) (string, error)
+	GetAll(pasta *models.PasteWithData) error
 }
 
 type Repository struct {

@@ -9,6 +9,7 @@ import (
 	"pastebin/pkg/handler"
 	"pastebin/pkg/repository/database"
 	"pastebin/pkg/repository/minio"
+	"pastebin/pkg/repository/redis"
 	"pastebin/pkg/service"
 	"syscall"
 	"time"
@@ -71,8 +72,14 @@ func main() {
 		log.Fatalf("failed to initialize minio: %s", err.Error())
 	}
 
+	redis := redis.NewRedisClient()
+	err = redis.InitRedis()
+	if err != nil {
+		log.Fatalf("failed to initialize redis: %s", err.Error())
+	}
+
 	repos := database.NewRepository(db)
-	services := service.NewService(repos, minioClient)
+	services := service.NewService(repos, minioClient, redis)
 	handlers := handler.NewHandler(*services)
 
 	srv := new(Server)

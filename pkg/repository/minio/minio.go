@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"pastebin/pkg/helpers"
+	"pastebin/pkg/models"
 	"sync"
 	"time"
 
@@ -14,29 +15,31 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-func (m *minioClient) CreateOne(file helpers.FileDataType) (string, error) {
+func (m *minioClient) CreateOne(data []byte) (models.Paste, error) {
 	objectID := uuid.New().String() + ".txt"
 	log.Println(objectID)
-	content := bytes.NewReader(file.Data)
+	content := bytes.NewReader(data)
 
 	_, err := m.mc.PutObject(
 		context.Background(),
 		m.cfg.BucketName,
 		objectID,
 		content,
-		int64(len(file.Data)),
+		int64(len(data)),
 		minio.PutObjectOptions{},
 	)
 	if err != nil {
-		return "", fmt.Errorf("error occured while creating object %s: %v", file.FileName, err)
+		return models.Paste{}, fmt.Errorf("error occured while creating object: %v", err)
 	}
 
-	// url, err := m.mc.PresignedGetObject(context.Background(), m.cfg.BucketName, objectID, time.Second*24*60*60, nil)
-	// if err != nil {
-	// 	return "", fmt.Errorf("error occured while creating URL for object %s: %v", file.FileName, err)
-	// }
+	paste := models.Paste{
+		CreatedAt:  time.Now(),
+		ExpiredAt:  time.Now().Add(time.Hour * 24),
+		StorageKey: objectID,
+		Size:       int(len(data)),
+	}
 
-	return objectID, nil
+	return paste, nil
 }
 
 func (m *minioClient) CreateMany(data map[string]helpers.FileDataType) ([]string, error) {
@@ -90,18 +93,6 @@ func (m *minioClient) CreateMany(data map[string]helpers.FileDataType) ([]string
 }
 
 func (m *minioClient) GetOne(objectID string) (string, error) {
-	// url, err := m.mc.PresignedGetObject(
-	// 	context.Background(),
-	// 	m.cfg.BucketName,
-	// 	objectID,
-	// 	time.Second*24*60*60,
-	// 	nil,
-	// )
-	// if err != nil {
-	// 	return "", fmt.Errorf("error occured while getting URL for object %s: %v", objectID, err)
-	// }
-	// return url.String(), nil
-
 	file, err := m.mc.GetObject(context.Background(), m.cfg.BucketName, objectID, minio.GetObjectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("error occured while getting URL for object %s: %v", objectID, err)

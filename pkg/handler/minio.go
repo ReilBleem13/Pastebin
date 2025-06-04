@@ -1,11 +1,9 @@
 package handler
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"log"
+	"context"
 	"net/http"
-	"pastebin/pkg/helpers"
+	"pastebin/pkg/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,6 +15,13 @@ type ErrorResponse struct {
 }
 
 type SuccessResponse struct {
+	Status   int          `json:"status"`
+	Message  string       `json:"message"`
+	Data     interface{}  `json:"data,omitempty"`
+	Metadata models.Paste `json:"metadata,omitempty"`
+}
+
+type SuccessGetResponse struct {
 	Status  int         `json:"status"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
@@ -36,59 +41,63 @@ func (h *Handler) CreateOne(c *gin.Context) {
 		c.String(400, err.Error())
 		return
 	}
-
-	log.Println("1::", req.Message)
 	reqData := []byte(req.Message)
-	log.Println("1::", reqData)
 
-	fileData := helpers.FileDataType{
-		FileName: "first-file",
-		Data:     reqData,
-	}
-
-	objectID, err := h.servises.Minio.CreateOne(fileData)
+	ctx := context.Background()
+	pasta, err := h.servises.Minio.CreateOne(ctx, reqData)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
-			Status:  500,
+			Status:  501,
 			Error:   "Unable to save the file",
 			Details: err,
 		})
 		return
 	}
 
-	hash := sha256.Sum256([]byte(objectID))
-	hashStr := hex.EncodeToString(hash[:])
-
-	err = h.servises.DBMinio.CreateLink(objectID, hashStr)
+	err = h.servises.DBMinio.CreatePasta(pasta)
 	if err != nil {
-		c.JSON(500, ErrorResponse{
-			Status:  500,
-			Error:   "Unable to save the file",
-			Details: err,
-		})
+		c.JSON(500, gin.H{"err": err})
 		return
 	}
 
 	c.JSON(http.StatusOK, SuccessResponse{
-		Status:  http.StatusOK,
-		Message: "File uploaded successfully",
-		Data:    urlForGet + hashStr,
+		Status:   http.StatusOK,
+		Message:  "File uploaded successfully",
+		Data:     urlForGet + pasta.Hash,
+		Metadata: pasta,
 	})
 }
 
 func (h *Handler) GetOne(c *gin.Context) {
 	hash := c.Param("objectID")
+	metadata := c.Query("metadata")
+
+	var flag bool
+	if metadata != "" {
+		if metadata == "true" {
+			flag = true
+		} else {
+			c.JSON(400, ErrorResponse{
+				Status: 400,
+				Error:  "Invalid formata -metadata-",
+			})
+			return
+		}
+	}
 
 	objectID, err := h.servises.DBMinio.GetLink(hash)
 	if err != nil {
-		c.JSON(500, ErrorResponse{
-			Status:  501,
-			Error:   "Enable to get objectdID",
-			Details: err,
-		})
+		c.JSON(500, gin.H{"err": err})
+		return
 	}
 
-	link, err := h.servises.GetOne(objectID)
+	ctx := context.Background()
+
+	var data models.PasteWithData
+	data.Hash = hash
+	data.ObjectID = objectID
+
+	err = h.servises.GetOne(ctx, &data, flag)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
 			Status:  502,
@@ -98,9 +107,9 @@ func (h *Handler) GetOne(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, SuccessResponse{
+	c.JSON(http.StatusOK, SuccessGetResponse{
 		Status:  http.StatusOK,
 		Message: "File received successfully",
-		Data:    link,
+		Data:    data,
 	})
 }
