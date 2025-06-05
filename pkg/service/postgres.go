@@ -1,7 +1,6 @@
 package service
 
 import (
-	"log"
 	"pastebin/pkg/models"
 	"pastebin/pkg/repository/database"
 	"pastebin/pkg/repository/redis"
@@ -21,6 +20,5 @@ func (p *DBMinioService) CreatePasta(pasta models.Paste) error {
 }
 
 func (p *DBMinioService) GetLink(hash string) (string, error) {
-	log.Println(1)
 	return p.repo.GetLink(hash)
 }

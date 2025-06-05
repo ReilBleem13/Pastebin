@@ -13,8 +13,10 @@ import (
 
 type Redis interface {
 	InitRedis() error
-	Add(ctx context.Context, pasta *models.Paste, data []byte) error
-	Get(ctx context.Context, pasta *models.PasteWithData, keyData, keyMeta string) error
+	AddText(ctx context.Context, hash string, data []byte) error
+	AddMeta(ctx context.Context, pasta *models.Paste) error
+	GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error
+	GetMeta(ctx context.Context, pasta *models.PasteWithData, keyMeta string) error
 }
 
 type RedisClient struct {
@@ -39,26 +41,65 @@ func (r *RedisClient) InitRedis() error {
 	return nil
 }
 
-func (r *RedisClient) Add(ctx context.Context, pasta *models.Paste, data []byte) error {
+func (r *RedisClient) AddText(ctx context.Context, hash string, data []byte) error {
+
+	err := r.redis.Set(ctx, "data:"+hash, data, 10*time.Second).Err()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *RedisClient) AddMeta(ctx context.Context, pasta *models.Paste) error {
 	pastaJSON, err := json.Marshal(pasta)
 	if err != nil {
 		return err
 	}
 
-	err = r.redis.Set(ctx, "meta:"+pasta.Hash, pastaJSON, 24*time.Hour).Err()
+	err = r.redis.Set(ctx, "meta:"+pasta.Hash, pastaJSON, 60*time.Second).Err()
 	if err != nil {
 		return err
 	}
-
-	err = r.redis.Set(ctx, "data:"+pasta.Hash, data, 1*time.Hour).Err()
-	if err != nil {
-		return fmt.Errorf("error: %v", err)
-	}
-
 	return nil
 }
 
-func (r *RedisClient) Get(ctx context.Context, pasta *models.PasteWithData, keyData, keyMeta string) error {
+// func (r *RedisClient) Get(ctx context.Context, pasta *models.PasteWithData, keyData, keyMeta string) error {
+
+// 	resultText, err := r.redis.Get(ctx, keyData).Result()
+// 	if err != nil {
+// 		if err == redis.Nil {
+// 			return fmt.Errorf("key doesn't exists: %v", err)
+// 		} else {
+// 			return err
+// 		}
+// 	}
+// 	pasta.Text = resultText
+// 	log.Println("текст из redis")
+
+// 	if keyMeta == "" {
+// 		return nil
+// 	}
+
+// 	resultMeta, err := r.redis.Get(ctx, keyMeta).Result()
+// 	if err != nil {
+// 		if err == redis.Nil {
+// 			return fmt.Errorf("key doesn't exists: %v", err)
+// 		} else {
+// 			return err
+// 		}
+// 	}
+
+// 	var metadata models.Paste
+// 	if err := json.Unmarshal([]byte(resultMeta), &metadata); err != nil {
+// 		return err
+// 	}
+// 	pasta.Metadata = metadata
+// 	log.Println("метаданые из redis")
+
+// 	return nil
+// }
+
+func (r *RedisClient) GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error {
 	resultText, err := r.redis.Get(ctx, keyData).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -68,12 +109,11 @@ func (r *RedisClient) Get(ctx context.Context, pasta *models.PasteWithData, keyD
 		}
 	}
 	pasta.Text = resultText
+	log.Println("текст из redis")
+	return nil
+}
 
-	log.Println("FROM REDIS")
-	if keyMeta == "" {
-		return nil
-	}
-
+func (r *RedisClient) GetMeta(ctx context.Context, pasta *models.PasteWithData, keyMeta string) error {
 	resultMeta, err := r.redis.Get(ctx, keyMeta).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -87,8 +127,8 @@ func (r *RedisClient) Get(ctx context.Context, pasta *models.PasteWithData, keyD
 	if err := json.Unmarshal([]byte(resultMeta), &metadata); err != nil {
 		return err
 	}
-
 	pasta.Metadata = metadata
-	log.Println("FROM REDIS")
+	log.Println("метаданые из redis")
+
 	return nil
 }

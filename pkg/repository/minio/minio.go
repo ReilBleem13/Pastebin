@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"pastebin/pkg/helpers"
 	"pastebin/pkg/models"
 	"sync"
@@ -17,7 +16,6 @@ import (
 
 func (m *minioClient) CreateOne(data []byte) (models.Paste, error) {
 	objectID := uuid.New().String() + ".txt"
-	log.Println(objectID)
 	content := bytes.NewReader(data)
 
 	_, err := m.mc.PutObject(

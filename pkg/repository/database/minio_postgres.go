@@ -23,27 +23,24 @@ func (m *MinioPostgres) CreatePasta(pasta models.Paste) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("error: %v", err)
 	return nil
 }
 
 func (m *MinioPostgres) GetLink(hash string) (string, error) {
-	log.Println(hash)
 	var storage_key string
 	if err := m.db.Get(&storage_key, fmt.Sprintf("SELECT storage_key FROM %s WHERE hash = $1", pastasTables), hash); err != nil {
-		log.Printf("err: %v", err)
 		return "", fmt.Errorf("error: %v", err)
 	}
-	log.Println(3)
 	return storage_key, nil
 }
 
 func (m *MinioPostgres) GetAll(pasta *models.PasteWithData) error {
 	var metadata models.Paste
-	err := m.db.Get(metadata, fmt.Sprintf(
+	err := m.db.Get(&metadata, fmt.Sprintf(
 		`	SELECT hash, user_id, storage_key, size, created_at, expired_at 
 			FROM %s WHERE storage_key = $1`, pastasTables), pasta.ObjectID)
 	if err != nil {
+		log.Println(err)
 		return err
 	}
 	pasta.Metadata = metadata

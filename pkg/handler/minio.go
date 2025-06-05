@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"pastebin/pkg/models"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,6 +38,7 @@ const (
 )
 
 func (h *Handler) CreateOne(c *gin.Context) {
+	start := time.Now()
 	var req request
 	if err := c.BindJSON(&req); err != nil {
 		c.String(400, err.Error())
@@ -47,7 +50,7 @@ func (h *Handler) CreateOne(c *gin.Context) {
 	pasta, err := h.servises.Minio.CreateOne(ctx, reqData)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
-			Status:  501,
+			Status:  500,
 			Error:   "Unable to save the file",
 			Details: err,
 		})
@@ -66,6 +69,7 @@ func (h *Handler) CreateOne(c *gin.Context) {
 		Data:     urlForGet + pasta.Hash,
 		Metadata: pasta,
 	})
+	log.Println(time.Since(start).Seconds())
 }
 
 func (h *Handler) GetOne(c *gin.Context) {
