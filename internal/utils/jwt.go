@@ -28,7 +28,7 @@ func GenerateToken(userID int) (string, error) {
 		},
 	}
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessTokenString, err := accessToken.SignedString(os.Getenv("JWT_KEY"))
+	accessTokenString, err := accessToken.SignedString([]byte(os.Getenv("JWT_KEY")))
 	if err != nil {
 		return "", err
 	}
@@ -40,7 +40,7 @@ func VerifyAccessToken(tokenString string) (*Claims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return os.Getenv("JWT_KEY"), nil
+		return []byte(os.Getenv("JWT_KEY")), nil
 	})
 
 	if err != nil {

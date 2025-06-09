@@ -29,42 +29,61 @@ type SuccessGetResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-type request struct {
-	Message string `json:"message"`
-}
-
 const (
 	urlForGet = "http://localhost:8080/files/"
 )
 
-func (h *Handler) CreateOne(c *gin.Context) {
-	start := time.Now()
-	var req request
-	if err := c.BindJSON(&req); err != nil {
-		c.String(400, err.Error())
-		return
-	}
-	reqData := []byte(req.Message)
+/*
+Добавьте поддержку дополнительных параметров в запросе:
+language (например, "python", "javascript").
+visibility ("public", "private", "password").
+password (для защищенных паст).
+expiration (например, "1h", "1d", "never").
 
-	ctx := context.Background()
-	pasta, err := h.servises.Minio.CreateOne(ctx, reqData)
+
+Подумайте о добавлении поля views (количество просмотров) в метаданные.
+expired_at можно сделать опциональным (например, null для паст без срока хранения).
+*/
+
+func (h *Handler) CreatePastaHandler(c *gin.Context) {
+	start := time.Now()
+
+	req, err := h.GetRequest(c)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
 			Status:  500,
-			Error:   "Unable to save the file",
+			Error:   err.Error(),
 			Details: err,
 		})
 		return
 	}
 
-	err = h.servises.DBMinio.CreatePasta(pasta)
+	userID, err := h.GetUserID(c)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err})
+		c.JSON(500, ErrorResponse{
+			Status:  500,
+			Error:   err.Error(),
+			Details: err,
+		})
 		return
 	}
 
-	c.JSON(http.StatusOK, SuccessResponse{
-		Status:   http.StatusOK,
+	reqData := []byte(req.Message)
+	ctx := context.Background()
+	pasta, err := h.servises.Minio.CreateOne(ctx, reqData)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	pasta.UserID = userID
+	err = h.servises.DBMinio.CreatePasta(req, &pasta)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, SuccessResponse{
+		Status:   201,
 		Message:  "File uploaded successfully",
 		Data:     urlForGet + pasta.Hash,
 		Metadata: pasta,
@@ -72,7 +91,21 @@ func (h *Handler) CreateOne(c *gin.Context) {
 	log.Println(time.Since(start).Seconds())
 }
 
-func (h *Handler) GetOne(c *gin.Context) {
+func (h *Handler) GetRawPastaHandler(c *gin.Context) {
+
+}
+
+func (h *Handler) GetPastaHandler(c *gin.Context) {
+	userID, err := h.GetUserID(c)
+	if err != nil {
+		c.JSON(500, ErrorResponse{
+			Status:  500,
+			Error:   err.Error(),
+			Details: err,
+		})
+		return
+	}
+
 	hash := c.Param("objectID")
 	metadata := c.Query("metadata")
 
@@ -89,18 +122,20 @@ func (h *Handler) GetOne(c *gin.Context) {
 		}
 	}
 
-	objectID, err := h.servises.DBMinio.GetLink(hash)
-	if err != nil {
-		c.JSON(500, gin.H{"err": err})
+	if err := h.servises.DBMinio.GetPastaByUserID(userID, hash); err != nil {
+		c.JSON(500, ErrorResponse{
+			Status:  500,
+			Error:   "failed check pasta",
+			Details: err,
+		})
 		return
 	}
 
-	ctx := context.Background()
-
 	var data models.PasteWithData
 	data.Metadata.Hash = hash
-	data.Metadata.Key = objectID
+	data.Metadata.UserID = userID
 
+	ctx := context.Background()
 	err = h.servises.GetOne(ctx, &data, flag)
 	if err != nil {
 		c.JSON(500, ErrorResponse{

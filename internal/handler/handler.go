@@ -20,10 +20,18 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	router := gin.New()
 
 	minioRoutes := router.Group("/files")
-
+	minioRoutes.Use(h.AccessMiddleWare())
 	{
-		minioRoutes.POST("/", h.CreateOne)
-		minioRoutes.GET("/:objectID", h.GetOne)
+		minioRoutes.POST("/", h.CreatePastaHandler)
+		minioRoutes.GET("/:objectID", h.GetPastaHandler)
+		minioRoutes.GET("/raw/:objectID", h.GetRawPastaHandler)
 	}
+
+	signUpIn := router.Group("/auth")
+	{
+		signUpIn.POST("/sign-up", h.SignUp)
+		signUpIn.POST("/sign-in", h.SignIn)
+	}
+
 	return router
 }

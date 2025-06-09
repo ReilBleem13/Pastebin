@@ -63,42 +63,6 @@ func (r *RedisClient) AddMeta(ctx context.Context, pasta *models.Paste) error {
 	return nil
 }
 
-// func (r *RedisClient) Get(ctx context.Context, pasta *models.PasteWithData, keyData, keyMeta string) error {
-
-// 	resultText, err := r.redis.Get(ctx, keyData).Result()
-// 	if err != nil {
-// 		if err == redis.Nil {
-// 			return fmt.Errorf("key doesn't exists: %v", err)
-// 		} else {
-// 			return err
-// 		}
-// 	}
-// 	pasta.Text = resultText
-// 	log.Println("текст из redis")
-
-// 	if keyMeta == "" {
-// 		return nil
-// 	}
-
-// 	resultMeta, err := r.redis.Get(ctx, keyMeta).Result()
-// 	if err != nil {
-// 		if err == redis.Nil {
-// 			return fmt.Errorf("key doesn't exists: %v", err)
-// 		} else {
-// 			return err
-// 		}
-// 	}
-
-// 	var metadata models.Paste
-// 	if err := json.Unmarshal([]byte(resultMeta), &metadata); err != nil {
-// 		return err
-// 	}
-// 	pasta.Metadata = metadata
-// 	log.Println("метаданые из redis")
-
-// 	return nil
-// }
-
 func (r *RedisClient) GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error {
 	resultText, err := r.redis.Get(ctx, keyData).Result()
 	if err != nil {

@@ -32,7 +32,7 @@ func (m *minioClient) CreateOne(data []byte) (models.Paste, error) {
 
 	paste := models.Paste{
 		CreatedAt: time.Now(),
-		ExpiredAt: time.Now().Add(time.Hour * 24),
+		ExpiresAt: time.Now().Add(time.Hour * 24),
 		Key:       objectID,
 		Size:      int(len(data)),
 	}

@@ -80,6 +80,19 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error {
 	start := time.Now()
 
+	key, err := m.repo.GetLink(pasta.Metadata.Hash)
+	if err != nil {
+		return err
+	}
+
+	visibility, err := m.repo.GetVisibility(pasta.Metadata.Hash)
+	if err != nil {
+		return err
+	}
+
+	pasta.Metadata.Key = key
+	pasta.Metadata.Visibility = visibility
+
 	var wg sync.WaitGroup
 	var textErr, metaErr error
 
@@ -87,7 +100,15 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 	keyData := fmt.Sprintf("data:%s", pasta.Metadata.Hash)
 
 	if !flag {
-		return m.GetText(ctx, pasta, keyData)
+		if err := m.GetText(ctx, pasta, keyData); err != nil {
+			return err
+		}
+
+		if err := m.repo.AddViews(pasta.Metadata.Hash); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	wg.Add(1)
@@ -102,7 +123,7 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 		err := m.redis.GetMeta(ctx, pasta, keyMeta)
 		if err != nil {
 			if strings.Contains(err.Error(), "key doesn't exists") {
-				if err := m.repo.GetAll(pasta); err != nil {
+				if err := m.repo.GetAll(&pasta.Metadata); err != nil {
 					metaErr = err
 					return
 				}
@@ -127,6 +148,9 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 		return metaErr
 	}
 
+	if err := m.repo.AddViews(pasta.Metadata.Hash); err != nil {
+		return err
+	}
 	log.Println("Обработка в сервисе. Время:", time.Since(start).Seconds())
 	return nil
 }

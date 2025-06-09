@@ -6,10 +6,15 @@ import (
 	"pastebin/internal/repository/database"
 	"pastebin/internal/repository/minio"
 	"pastebin/internal/repository/redis"
+	"pastebin/pkg/dto"
 	"pastebin/pkg/helpers"
 )
 
-type Authorization interface{}
+type Authorization interface {
+	CreateNewUser(user *dto.RequestNewUser) error
+	CheckLogin(request *dto.LoginUser) error
+	GenerateToken(request *dto.LoginUser) (string, error)
+}
 
 type Minio interface {
 	CreateOne(ctx context.Context, data []byte) (models.Paste, error)
@@ -22,7 +27,10 @@ type Minio interface {
 
 type DBMinio interface {
 	GetLink(hash string) (string, error)
-	CreatePasta(pasta models.Paste) error
+	CreatePasta(request dto.RequestCreatePasta, pasta *models.Paste) error
+	GetVisibility(hash string) (string, error)
+	GetPastaByUserID(userID int, hash string) error
+	AddViews(hash string) error
 }
 
 type Service struct {
