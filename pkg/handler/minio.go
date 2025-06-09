@@ -59,7 +59,7 @@ func (h *Handler) CreateOne(c *gin.Context) {
 
 	err = h.servises.DBMinio.CreatePasta(pasta)
 	if err != nil {
-		c.JSON(500, gin.H{"err": err})
+		c.JSON(500, gin.H{"error": err})
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *Handler) GetOne(c *gin.Context) {
 		} else {
 			c.JSON(400, ErrorResponse{
 				Status: 400,
-				Error:  "Invalid formata -metadata-",
+				Error:  "Invalid query format",
 			})
 			return
 		}
@@ -98,8 +98,8 @@ func (h *Handler) GetOne(c *gin.Context) {
 	ctx := context.Background()
 
 	var data models.PasteWithData
-	data.Hash = hash
-	data.ObjectID = objectID
+	data.Metadata.Hash = hash
+	data.Metadata.StorageKey = objectID
 
 	err = h.servises.GetOne(ctx, &data, flag)
 	if err != nil {

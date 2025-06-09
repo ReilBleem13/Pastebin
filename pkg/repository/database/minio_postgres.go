@@ -38,7 +38,7 @@ func (m *MinioPostgres) GetAll(pasta *models.PasteWithData) error {
 	var metadata models.Paste
 	err := m.db.Get(&metadata, fmt.Sprintf(
 		`	SELECT hash, user_id, storage_key, size, created_at, expired_at 
-			FROM %s WHERE storage_key = $1`, pastasTables), pasta.ObjectID)
+			FROM %s WHERE storage_key = $1`, pastasTables), pasta.Metadata.StorageKey)
 	if err != nil {
 		log.Println(err)
 		return err

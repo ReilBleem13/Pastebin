@@ -59,13 +59,13 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 	err := m.redis.GetText(ctx, pasta, keyData)
 	if err != nil {
 		if strings.Contains(err.Error(), "key doesn't exists") {
-			pasta.Text, err = m.client.GetOne(pasta.ObjectID)
+			pasta.Text, err = m.client.GetOne(pasta.Metadata.StorageKey)
 			if err != nil {
 				return err
 			}
 			log.Println("Текст из MINIO")
 
-			if err := m.redis.AddText(ctx, pasta.Hash, []byte(pasta.Text)); err != nil {
+			if err := m.redis.AddText(ctx, pasta.Metadata.Hash, []byte(pasta.Text)); err != nil {
 				return err
 			}
 			log.Println("Текст добавлен в Redis")
@@ -73,7 +73,7 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 			return err
 		}
 	}
-	log.Println("Обработка ТЕКСТА в сервисе. Время:", time.Since(start).Seconds())
+	log.Println("Обработка текста в сервисе. Время:", time.Since(start).Seconds())
 	return nil
 }
 
@@ -83,8 +83,8 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 	var wg sync.WaitGroup
 	var textErr, metaErr error
 
-	keyMeta := fmt.Sprintf("meta:%s", pasta.Hash)
-	keyData := fmt.Sprintf("data:%s", pasta.Hash)
+	keyMeta := fmt.Sprintf("meta:%s", pasta.Metadata.Hash)
+	keyData := fmt.Sprintf("data:%s", pasta.Metadata.Hash)
 
 	if !flag {
 		return m.GetText(ctx, pasta, keyData)
