@@ -1,6 +1,6 @@
 package service
 
-import "pastebin/pkg/repository/database"
+import "pastebin/internal/repository/database"
 
 type AuthService struct {
 	repo database.Authorization

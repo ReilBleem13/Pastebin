@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
+	"pastebin/internal/models"
+	"pastebin/internal/repository/database"
+	"pastebin/internal/repository/minio"
+	"pastebin/internal/repository/redis"
 	"pastebin/pkg/helpers"
-	"pastebin/pkg/models"
-	"pastebin/pkg/repository/database"
-	"pastebin/pkg/repository/minio"
-	"pastebin/pkg/repository/redis"
 )
 
 type Authorization interface{}

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"pastebin/pkg/models"
+	"pastebin/internal/models"
 	"time"
 
 	"github.com/go-redis/redis/v8"

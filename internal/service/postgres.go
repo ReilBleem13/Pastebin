@@ -1,9 +1,9 @@
 package service
 
 import (
-	"pastebin/pkg/models"
-	"pastebin/pkg/repository/database"
-	"pastebin/pkg/repository/redis"
+	"pastebin/internal/models"
+	"pastebin/internal/repository/database"
+	"pastebin/internal/repository/redis"
 )
 
 type DBMinioService struct {

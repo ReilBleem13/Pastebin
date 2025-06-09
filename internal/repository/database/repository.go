@@ -1,7 +1,7 @@
 package database
 
 import (
-	"pastebin/pkg/models"
+	"pastebin/internal/models"
 
 	"github.com/jmoiron/sqlx"
 )

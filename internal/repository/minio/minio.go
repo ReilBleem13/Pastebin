@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"pastebin/internal/models"
 	"pastebin/pkg/helpers"
-	"pastebin/pkg/models"
 	"sync"
 	"time"
 
@@ -31,10 +31,10 @@ func (m *minioClient) CreateOne(data []byte) (models.Paste, error) {
 	}
 
 	paste := models.Paste{
-		CreatedAt:  time.Now(),
-		ExpiredAt:  time.Now().Add(time.Hour * 24),
-		StorageKey: objectID,
-		Size:       int(len(data)),
+		CreatedAt: time.Now(),
+		ExpiredAt: time.Now().Add(time.Hour * 24),
+		Key:       objectID,
+		Size:      int(len(data)),
 	}
 
 	return paste, nil

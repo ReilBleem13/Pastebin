@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"pastebin/pkg/models"
+	"pastebin/internal/models"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -99,7 +99,7 @@ func (h *Handler) GetOne(c *gin.Context) {
 
 	var data models.PasteWithData
 	data.Metadata.Hash = hash
-	data.Metadata.StorageKey = objectID
+	data.Metadata.Key = objectID
 
 	err = h.servises.GetOne(ctx, &data, flag)
 	if err != nil {
@@ -111,9 +111,17 @@ func (h *Handler) GetOne(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, SuccessGetResponse{
-		Status:  http.StatusOK,
-		Message: "File received successfully",
-		Data:    data,
-	})
+	if flag {
+		c.JSON(http.StatusOK, SuccessGetResponse{
+			Status:  http.StatusOK,
+			Message: "File received successfully",
+			Data:    data,
+		})
+	} else {
+		c.JSON(http.StatusOK, SuccessGetResponse{
+			Status:  http.StatusOK,
+			Message: "File received successfully",
+			Data:    data.Text,
+		})
+	}
 }

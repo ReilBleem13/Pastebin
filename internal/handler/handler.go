@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"pastebin/pkg/service"
+	"pastebin/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

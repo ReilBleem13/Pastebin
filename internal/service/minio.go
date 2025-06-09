@@ -6,11 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"pastebin/internal/models"
+	"pastebin/internal/repository/database"
+	"pastebin/internal/repository/minio"
+	"pastebin/internal/repository/redis"
 	"pastebin/pkg/helpers"
-	"pastebin/pkg/models"
-	"pastebin/pkg/repository/database"
-	"pastebin/pkg/repository/minio"
-	"pastebin/pkg/repository/redis"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +35,7 @@ func (m *MinioService) CreateOne(ctx context.Context, data []byte) (models.Paste
 	if err != nil {
 		return models.Paste{}, fmt.Errorf("unable ti save the file: %v", err)
 	}
-	hash := sha256.Sum256([]byte(pasta.StorageKey))
+	hash := sha256.Sum256([]byte(pasta.Key))
 	hashStr := hex.EncodeToString(hash[:])
 	pasta.Hash = hashStr
 
@@ -59,7 +59,7 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 	err := m.redis.GetText(ctx, pasta, keyData)
 	if err != nil {
 		if strings.Contains(err.Error(), "key doesn't exists") {
-			pasta.Text, err = m.client.GetOne(pasta.Metadata.StorageKey)
+			pasta.Text, err = m.client.GetOne(pasta.Metadata.Key)
 			if err != nil {
 				return err
 			}

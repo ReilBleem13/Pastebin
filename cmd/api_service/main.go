@@ -3,40 +3,19 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
-	"pastebin/pkg/handler"
-	"pastebin/pkg/repository/database"
-	"pastebin/pkg/repository/minio"
-	"pastebin/pkg/repository/redis"
-	"pastebin/pkg/service"
+	"pastebin/internal/handler"
+	"pastebin/internal/repository/database"
+	"pastebin/internal/repository/minio"
+	"pastebin/internal/repository/redis"
+	"pastebin/internal/service"
 	"syscall"
-	"time"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/spf13/viper"
 )
-
-type Server struct {
-	httpServer *http.Server
-}
-
-func (s *Server) Run(port string, handler http.Handler) error {
-	s.httpServer = &http.Server{
-		Addr:           ":" + port,
-		Handler:        handler,
-		MaxHeaderBytes: 1 << 20,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-	}
-	return s.httpServer.ListenAndServe()
-}
-
-func (s *Server) Shutdown(ctx context.Context) error {
-	return s.httpServer.Shutdown(ctx)
-}
 
 func main() {
 
@@ -82,7 +61,7 @@ func main() {
 	services := service.NewService(repos, minioClient, redis)
 	handlers := handler.NewHandler(*services)
 
-	srv := new(Server)
+	srv := new(handler.Server)
 	go func() {
 		if err := srv.Run(viper.GetString("port"), handlers.InitRoutes()); err != nil {
 			log.Fatalf("error occured while running http server; %s", err.Error())

@@ -2,8 +2,8 @@ package minio
 
 import (
 	"context"
+	"pastebin/internal/models"
 	"pastebin/pkg/helpers"
-	"pastebin/pkg/models"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
