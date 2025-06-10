@@ -29,8 +29,12 @@ type DBMinio interface {
 	GetLink(hash string) (string, error)
 	CreatePasta(request dto.RequestCreatePasta, pasta *models.Paste) error
 	GetVisibility(hash string) (string, error)
-	GetPastaByUserID(userID int, hash string) error
+	GetPastaByUserID(hash string) error
 	AddViews(hash string) error
+	GetHashPassword(hash string) (string, error)
+
+	CheckPastaPassword(password, hash string) error
+	CheckPermission(userID int, hash string) (bool, error)
 }
 
 type Service struct {

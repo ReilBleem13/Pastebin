@@ -13,11 +13,7 @@ const (
 	authorizationHeader = "Authorization"
 	userCtx             = "userId"
 	requestCtx          = "request"
-)
-
-var (
-	SupportedLanguages    = []string{"plaintext", "python", "javascript", "java", "cpp", "csharp", "ruby", "go", "sql", "markdown", "json", "yaml", "html", "css", "bash"}
-	SupportedVisibilities = []string{"public", "private"}
+	visibilityCtx       = "visibility"
 )
 
 func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
@@ -57,17 +53,16 @@ func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 
 func (h *Handler) AccessMiddleWare() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var request dto.RequestCreatePasta
 		if c.Request.Method == "POST" {
+			var request dto.RequestCreatePasta
 			if err := c.BindJSON(&request); err != nil {
 				c.JSON(400, gin.H{"error": err})
 				c.Abort()
 				return
 			}
-
 			c.Set("request", request)
 
-			if request.Visibility == "private" {
+			if request.Visibility == ptrSrt("private") {
 				h.AuthMiddleWare()(c)
 				if c.IsAborted() {
 					return
@@ -84,6 +79,7 @@ func (h *Handler) AccessMiddleWare() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		c.Set(visibilityCtx, visibility)
 
 		if visibility == "private" {
 			h.AuthMiddleWare()(c)
@@ -95,10 +91,14 @@ func (h *Handler) AccessMiddleWare() gin.HandlerFunc {
 	}
 }
 
+func ptrSrt(s string) *string {
+	return &s
+}
+
 func (h *Handler) GetUserID(c *gin.Context) (int, error) {
 	id, exists := c.Get(userCtx)
 	if !exists {
-		return 0, errors.New("user id not found")
+		return 0, nil
 	}
 
 	idInt, ok := id.(int)
@@ -120,4 +120,17 @@ func (h *Handler) GetRequest(c *gin.Context) (dto.RequestCreatePasta, error) {
 	}
 
 	return requestNew, nil
+}
+
+func (h *Handler) GetVisibility(c *gin.Context) (string, error) {
+	visib, exists := c.Get(visibilityCtx)
+	if !exists {
+		return "", errors.New("visibility not found")
+	}
+	visibNew, ok := visib.(string)
+	if !ok {
+		return "", errors.New("visibility is of invalid type")
+	}
+
+	return visibNew, nil
 }

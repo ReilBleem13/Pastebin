@@ -43,9 +43,9 @@ func (m *MinioService) CreateOne(ctx context.Context, data []byte) (models.Paste
 		return models.Paste{}, err
 	}
 
-	if err := m.redis.AddMeta(ctx, &pasta); err != nil {
-		return models.Paste{}, err
-	}
+	// if err := m.redis.AddMeta(ctx, &pasta); err != nil {
+	// 	return models.Paste{}, err
+	// }
 
 	return pasta, nil
 }
@@ -63,12 +63,12 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 			if err != nil {
 				return err
 			}
-			log.Println("Текст из MINIO")
+			log.Println("текст из MINIO")
 
 			if err := m.redis.AddText(ctx, pasta.Metadata.Hash, []byte(pasta.Text)); err != nil {
 				return err
 			}
-			log.Println("Текст добавлен в Redis")
+			log.Println("текст добавлен в Redis")
 		} else {
 			return err
 		}
@@ -84,14 +84,7 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 	if err != nil {
 		return err
 	}
-
-	visibility, err := m.repo.GetVisibility(pasta.Metadata.Hash)
-	if err != nil {
-		return err
-	}
-
 	pasta.Metadata.Key = key
-	pasta.Metadata.Visibility = visibility
 
 	var wg sync.WaitGroup
 	var textErr, metaErr error

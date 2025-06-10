@@ -34,15 +34,7 @@ const (
 )
 
 /*
-Добавьте поддержку дополнительных параметров в запросе:
-language (например, "python", "javascript").
-visibility ("public", "private", "password").
-password (для защищенных паст).
-expiration (например, "1h", "1d", "never").
-
-
 Подумайте о добавлении поля views (количество просмотров) в метаданные.
-expired_at можно сделать опциональным (например, null для паст без срока хранения).
 */
 
 func (h *Handler) CreatePastaHandler(c *gin.Context) {
@@ -91,12 +83,38 @@ func (h *Handler) CreatePastaHandler(c *gin.Context) {
 	log.Println(time.Since(start).Seconds())
 }
 
-func (h *Handler) GetRawPastaHandler(c *gin.Context) {
+// func (h *Handler) GetRawPastaHandler(c *gin.Context) {}
 
+type request struct {
+	Password *string `json:"password,omitempty"`
 }
 
 func (h *Handler) GetPastaHandler(c *gin.Context) {
+	var newRequest request
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		log.Println("Empty request body, proceeding with empty request:", newRequest)
+	} else {
+		if err := c.BindJSON(&newRequest); err != nil {
+			c.JSON(400, ErrorResponse{
+				Status:  400,
+				Error:   "Invalid JSON" + err.Error(),
+				Details: err,
+			})
+			return
+		}
+	}
+
 	userID, err := h.GetUserID(c)
+	if err != nil {
+		c.JSON(500, ErrorResponse{
+			Status:  500,
+			Error:   err.Error(),
+			Details: err,
+		})
+		return
+	}
+
+	visibility, err := h.GetVisibility(c)
 	if err != nil {
 		c.JSON(500, ErrorResponse{
 			Status:  500,
@@ -122,18 +140,59 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		}
 	}
 
-	if err := h.servises.DBMinio.GetPastaByUserID(userID, hash); err != nil {
-		c.JSON(500, ErrorResponse{
-			Status:  500,
-			Error:   "failed check pasta",
-			Details: err,
-		})
-		return
+	var needPassword bool
+	if visibility == "private" {
+		exists, err := h.servises.DBMinio.CheckPermission(userID, hash)
+		if err != nil {
+			if err.Error() == "no rights" {
+				c.JSON(403, gin.H{"error": err})
+				return
+			} else {
+				c.JSON(500, gin.H{"error": err})
+				return
+			}
+		}
+		if exists {
+			needPassword = exists
+		}
+	} else {
+		if newRequest.Password != nil {
+			if err := h.servises.DBMinio.CheckPastaPassword(*newRequest.Password, hash); err != nil {
+				if err.Error() == "wrong password" {
+					c.JSON(403, gin.H{"error": err}) // не выдает ошибку
+					return
+				} else {
+					c.JSON(400, gin.H{"error": err})
+					return
+				}
+			}
+		} else {
+			c.JSON(400, gin.H{"error": "need password"})
+			return
+		}
+	}
+
+	if needPassword {
+		if newRequest.Password != nil {
+			if err := h.servises.DBMinio.CheckPastaPassword(*newRequest.Password, hash); err != nil {
+				if err.Error() == "wrong password" {
+					c.JSON(403, gin.H{"error": err}) // не выдает ошибку
+					return
+				} else {
+					c.JSON(400, gin.H{"error": err})
+					return
+				}
+			}
+		} else {
+			c.JSON(400, gin.H{"error": "need password"})
+			return
+		}
 	}
 
 	var data models.PasteWithData
 	data.Metadata.Hash = hash
 	data.Metadata.UserID = userID
+	data.Metadata.Visibility = &visibility
 
 	ctx := context.Background()
 	err = h.servises.GetOne(ctx, &data, flag)

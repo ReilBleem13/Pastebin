@@ -24,7 +24,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	{
 		minioRoutes.POST("/", h.CreatePastaHandler)
 		minioRoutes.GET("/:objectID", h.GetPastaHandler)
-		minioRoutes.GET("/raw/:objectID", h.GetRawPastaHandler)
+		// minioRoutes.GET("/raw/:objectID", h.GetRawPastaHandler)
 	}
 
 	signUpIn := router.Group("/auth")

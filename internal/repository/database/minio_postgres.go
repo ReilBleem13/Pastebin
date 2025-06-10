@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"pastebin/internal/models"
@@ -46,6 +47,7 @@ func (m *MinioPostgres) GetVisibility(hash string) (string, error) {
 }
 
 func (m *MinioPostgres) GetAll(pasta *models.Paste) error {
+	log.Println(200)
 	err := m.db.Get(pasta, fmt.Sprintf(
 		`	SELECT hash, key, user_id, size, language, visibility, views, created_at, expires_at 
 			FROM %s WHERE key = $1`, pastasTables), pasta.Key)
@@ -53,16 +55,30 @@ func (m *MinioPostgres) GetAll(pasta *models.Paste) error {
 		log.Println(err)
 		return err
 	}
+	log.Println(100, pasta.Visibility, pasta.Language)
 	return nil
 }
 
-func (m *MinioPostgres) GetPastaByUserID(userID int, hash string) error {
+func (m *MinioPostgres) GetPastaByUserID(hash string) error {
 	var id int
-	err := m.db.Get(&id, fmt.Sprintf("SELECT id FROM %s WHERE user_id = $1 AND hash = $2", pastasTables), userID, hash)
+	err := m.db.Get(&id, fmt.Sprintf("SELECT id FROM %s WHERE hash = $1", pastasTables), hash)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("pasta not found")
 	}
-	return err
+	return nil
+}
+
+func (m *MinioPostgres) GetHashPassword(hash string) (string, error) {
+	var hashPassword string
+
+	err := m.db.Get(&hashPassword, fmt.Sprintf("SELECT password_hash FROM %s WHERE hash = $1", pastasTables), hash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("password_hash is empty")
+		}
+		return "", err
+	}
+	return hashPassword, nil
 }
 
 func (m *MinioPostgres) AddViews(hash string) error {
@@ -71,4 +87,19 @@ func (m *MinioPostgres) AddViews(hash string) error {
 		return err
 	}
 	return nil
+}
+
+///
+
+func (m *MinioPostgres) CheckPermission(userID int, hash string) (string, error) {
+	var password_hash string
+
+	err := m.db.Get(&password_hash, fmt.Sprintf("SELECT password_hash FROM %s WHERE user_id = $1 AND hash = $2", pastasTables), userID, hash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", errors.New("failed to fetch id by userID & hash")
+		}
+		return "", err
+	}
+	return password_hash, nil
 }
