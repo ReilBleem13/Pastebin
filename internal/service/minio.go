@@ -152,8 +152,12 @@ func (m *MinioService) GetMany(objectIDs []string) ([]string, error) {
 	return m.client.GetMany(objectIDs)
 }
 
-func (m *MinioService) DeleteOne(objectID string) error {
-	return m.client.DeleteOne(objectID)
+func (m *MinioService) DeleteOne(hash string) error {
+	key, err := m.repo.DeleteMetadata(hash)
+	if err != nil {
+		return err
+	}
+	return m.client.DeleteOne(key)
 }
 
 func (m *MinioService) DeleteMany(objectIDs []string) error {

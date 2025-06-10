@@ -25,6 +25,7 @@ func (m *MinioPostgres) CreatePasta(pasta *models.Paste) error {
 	if err != nil {
 		return err
 	}
+	log.Printf("user_id: %v", pasta.UserID)
 	return nil
 }
 
@@ -97,9 +98,18 @@ func (m *MinioPostgres) CheckPermission(userID int, hash string) (string, error)
 	err := m.db.Get(&password_hash, fmt.Sprintf("SELECT password_hash FROM %s WHERE user_id = $1 AND hash = $2", pastasTables), userID, hash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", errors.New("failed to fetch id by userID & hash")
+			return "", errors.New("failed to fetch password_hash")
 		}
 		return "", err
 	}
 	return password_hash, nil
 }
+
+func (m *MinioPostgres) DeleteMetadata(hash string) (string, error) {
+	var key string
+	err := m.db.Get(&key, fmt.Sprintf("DELETE FROM %s WHERE hash = $1 RETURNING key", pastasTables), hash)
+	if err != nil {
+		return "", err
+	}
+	return key, nil
+} // обработку ошибки

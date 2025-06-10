@@ -45,7 +45,6 @@ func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-
 		c.Set(userCtx, claims.UserID)
 		c.Next()
 	}
@@ -62,10 +61,12 @@ func (h *Handler) AccessMiddleWare() gin.HandlerFunc {
 			}
 			c.Set("request", request)
 
-			if request.Visibility == ptrSrt("private") {
-				h.AuthMiddleWare()(c)
-				if c.IsAborted() {
-					return
+			if request.Visibility != nil {
+				if *request.Visibility == "private" {
+					h.AuthMiddleWare()(c)
+					if c.IsAborted() {
+						return
+					}
 				}
 			}
 			c.Next()

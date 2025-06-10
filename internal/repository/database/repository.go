@@ -23,6 +23,7 @@ type Minio interface {
 	GetHashPassword(hash string) (string, error)
 
 	CheckPermission(userID int, hash string) (string, error)
+	DeleteMetadata(hash string) (string, error)
 }
 
 type Repository struct {

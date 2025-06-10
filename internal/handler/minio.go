@@ -83,8 +83,6 @@ func (h *Handler) CreatePastaHandler(c *gin.Context) {
 	log.Println(time.Since(start).Seconds())
 }
 
-// func (h *Handler) GetRawPastaHandler(c *gin.Context) {}
-
 type request struct {
 	Password *string `json:"password,omitempty"`
 }
@@ -142,7 +140,7 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 
 	var needPassword bool
 	if visibility == "private" {
-		exists, err := h.servises.DBMinio.CheckPermission(userID, hash)
+		exists, err := h.servises.DBMinio.CheckPrivatePermission(userID, hash)
 		if err != nil {
 			if err.Error() == "no rights" {
 				c.JSON(403, gin.H{"error": err})
@@ -156,19 +154,18 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 			needPassword = exists
 		}
 	} else {
-		if newRequest.Password != nil {
-			if err := h.servises.DBMinio.CheckPastaPassword(*newRequest.Password, hash); err != nil {
-				if err.Error() == "wrong password" {
-					c.JSON(403, gin.H{"error": err}) // не выдает ошибку
-					return
-				} else {
-					c.JSON(400, gin.H{"error": err})
-					return
-				}
+		exists, err := h.servises.DBMinio.CheckPublicPermission(hash)
+		if err != nil {
+			if err.Error() == "no rights" {
+				c.JSON(403, gin.H{"error": err})
+				return
+			} else {
+				c.JSON(500, gin.H{"error": err})
+				return
 			}
-		} else {
-			c.JSON(400, gin.H{"error": "need password"})
-			return
+		}
+		if exists {
+			needPassword = exists
 		}
 	}
 
@@ -218,4 +215,92 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 			Data:    data.Text,
 		})
 	}
+}
+
+func (h *Handler) DeletePastaHandler(c *gin.Context) {
+	var newRequest request
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		log.Println("Empty request body, proceeding with empty request:", newRequest)
+	} else {
+		if err := c.BindJSON(&newRequest); err != nil {
+			c.JSON(400, ErrorResponse{
+				Status:  400,
+				Error:   "Invalid JSON" + err.Error(),
+				Details: err,
+			})
+			return
+		}
+	}
+	visibility, err := h.GetVisibility(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, err := h.GetUserID(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	hash := c.Param("objectID")
+
+	var needPassword bool
+	if visibility == "private" {
+		exists, err := h.servises.DBMinio.CheckPrivatePermission(userID, hash)
+		if err != nil {
+			if err.Error() == "no rights" {
+				log.Println("err", err)
+				c.JSON(403, gin.H{"error": err.Error()})
+				return
+			} else {
+				log.Println("err", err)
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		if exists {
+			needPassword = exists
+		}
+	} else {
+		exists, err := h.servises.DBMinio.CheckPublicPermission(hash)
+		if err != nil {
+			if err.Error() == "no rights" {
+				c.JSON(403, gin.H{"error": err.Error()})
+				return
+			} else {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		if exists {
+			needPassword = exists
+		}
+	}
+
+	if needPassword {
+		if newRequest.Password != nil {
+			if err := h.servises.DBMinio.CheckPastaPassword(*newRequest.Password, hash); err != nil {
+				if err.Error() == "wrong password" {
+					log.Println("неверный пароль")
+					c.JSON(403, gin.H{"error": err.Error()}) // не выдает ошибку
+					return
+				} else {
+					c.JSON(400, gin.H{"error": err.Error()})
+					return
+				}
+			}
+		} else {
+			log.Println("нужен пароль")
+			c.JSON(400, gin.H{"error": "need password"})
+			return
+		}
+	}
+
+	if err := h.servises.Minio.DeleteOne(hash); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "deleted"})
 }

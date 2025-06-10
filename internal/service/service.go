@@ -21,7 +21,7 @@ type Minio interface {
 	CreateMany(files map[string]helpers.FileDataType) ([]string, error)
 	GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error
 	GetMany(objectIDs []string) ([]string, error)
-	DeleteOne(objectID string) error
+	DeleteOne(hash string) error
 	DeleteMany(objectIDs []string) error
 }
 
@@ -31,10 +31,10 @@ type DBMinio interface {
 	GetVisibility(hash string) (string, error)
 	GetPastaByUserID(hash string) error
 	AddViews(hash string) error
-	GetHashPassword(hash string) (string, error)
 
+	CheckPublicPermission(hash string) (bool, error)
 	CheckPastaPassword(password, hash string) error
-	CheckPermission(userID int, hash string) (bool, error)
+	CheckPrivatePermission(userID int, hash string) (bool, error)
 }
 
 type Service struct {

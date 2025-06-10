@@ -19,12 +19,12 @@ func NewHandler(servises service.Service) *Handler {
 func (h *Handler) InitRoutes() *gin.Engine {
 	router := gin.New()
 
-	minioRoutes := router.Group("/files")
-	minioRoutes.Use(h.AccessMiddleWare())
+	mainRouter := router.Group("/files")
+	mainRouter.Use(h.AccessMiddleWare())
 	{
-		minioRoutes.POST("/", h.CreatePastaHandler)
-		minioRoutes.GET("/:objectID", h.GetPastaHandler)
-		// minioRoutes.GET("/raw/:objectID", h.GetRawPastaHandler)
+		mainRouter.POST("/", h.CreatePastaHandler)
+		mainRouter.GET("/:objectID", h.GetPastaHandler)
+		mainRouter.DELETE("/:objectID", h.DeletePastaHandler)
 	}
 
 	signUpIn := router.Group("/auth")

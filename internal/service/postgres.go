@@ -62,13 +62,23 @@ func (p *DBMinioService) CreatePasta(req dto.RequestCreatePasta, pasta *models.P
 	return p.repo.CreatePasta(pasta)
 }
 
-func (p *DBMinioService) CheckPermission(userID int, hash string) (bool, error) {
+func (p *DBMinioService) CheckPrivatePermission(userID int, hash string) (bool, error) {
 	password_hash, err := p.repo.CheckPermission(userID, hash)
 	if err != nil {
-		if strings.Contains(err.Error(), "failed to fetch id") {
+		if strings.Contains(err.Error(), "failed to fetch password_hash") {
 			return false, errors.New("no rights")
 		}
 		return false, err
+	}
+	return password_hash != "", nil
+}
+
+func (p *DBMinioService) CheckPublicPermission(hash string) (bool, error) {
+	password_hash, err := p.repo.GetHashPassword(hash)
+	if err != nil {
+		if strings.Contains(err.Error(), "password_hash is empty") {
+			return false, fmt.Errorf("password is empty")
+		}
 	}
 	return password_hash != "", nil
 }
@@ -86,16 +96,6 @@ func (p *DBMinioService) CheckPastaPassword(password, hash string) error {
 	}
 	return nil
 }
-
-func (p *DBMinioService) GetHashPassword(hash string) (string, error) {
-	password_hash, err := p.repo.GetHashPassword(hash)
-	if err != nil {
-		if strings.Contains(err.Error(), "password_hash is empty") {
-			return "", fmt.Errorf("pasta without password")
-		}
-	}
-	return password_hash, nil
-} // удалить
 
 func (p *DBMinioService) GetLink(hash string) (string, error) {
 	return p.repo.GetLink(hash)
