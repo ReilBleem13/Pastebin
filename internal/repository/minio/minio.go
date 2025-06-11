@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"pastebin/internal/models"
 	"pastebin/pkg/helpers"
 	"sync"
@@ -87,6 +88,7 @@ func (m *minioClient) CreateMany(data map[string]helpers.FileDataType) ([]string
 	for url := range urlCh {
 		urls = append(urls, url)
 	}
+
 	return urls, nil
 }
 
@@ -202,4 +204,47 @@ func (m *minioClient) DeleteMany(objectIDs []string) error {
 		return fmt.Errorf("failed to delete objects: %v", errs)
 	}
 	return nil
+}
+
+type Paste struct {
+	Key          string
+	LastModified string
+}
+
+func (m *minioClient) Test(maxKeys int, startAfter string) {
+	opts := minio.ListObjectsOptions{
+		Recursive:  true,
+		Prefix:     "",
+		MaxKeys:    maxKeys,
+		StartAfter: startAfter,
+	}
+
+	keys := []string{}
+	objectCh := m.mc.ListObjects(context.Background(), m.cfg.BucketName, opts)
+
+	for i := 0; i < maxKeys; i++ {
+		object, ok := <-objectCh
+		if !ok {
+			break
+		}
+		if object.Err != nil {
+			log.Fatalf("failed to list objects: %v", object.Err)
+		}
+		keys = append(keys, object.Key)
+	}
+
+	nextToken := ""
+	if len(keys) == maxKeys {
+		nextToken = keys[len(keys)-1]
+	}
+
+	pastas, err := m.GetMany(keys)
+	if err != nil {
+		log.Fatalf("error: %v", err)
+	}
+
+	for i, pasta := range pastas {
+		log.Printf("#%d: %s", i, pasta)
+	}
+	log.Println("TOKEN", nextToken)
 }

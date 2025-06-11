@@ -33,5 +33,6 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		signUpIn.POST("/sign-in", h.SignIn)
 	}
 
+	router.GET("/test", h.PaginatePastaHandler)
 	return router
 }

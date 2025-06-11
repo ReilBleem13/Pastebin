@@ -24,6 +24,7 @@ type Minio interface {
 
 	CheckPermission(userID int, hash string) (string, error)
 	DeleteMetadata(hash string) (string, error)
+	GetKeys(userID int) ([]string, error)
 }
 
 type Repository struct {

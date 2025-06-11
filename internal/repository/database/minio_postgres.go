@@ -105,6 +105,18 @@ func (m *MinioPostgres) CheckPermission(userID int, hash string) (string, error)
 	return password_hash, nil
 }
 
+func (m *MinioPostgres) GetKeys(userID int) ([]string, error) {
+	var keys []string
+	err := m.db.Get(&keys, fmt.Sprintf("SELECT key FROM %s WHERE user_id = $1", pastasTables), userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return []string{}, errors.New("pastas is empty")
+		}
+		return []string{}, err
+	}
+	return keys, nil
+}
+
 func (m *MinioPostgres) DeleteMetadata(hash string) (string, error) {
 	var key string
 	err := m.db.Get(&key, fmt.Sprintf("DELETE FROM %s WHERE hash = $1 RETURNING key", pastasTables), hash)

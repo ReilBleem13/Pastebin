@@ -163,3 +163,20 @@ func (m *MinioService) DeleteOne(hash string) error {
 func (m *MinioService) DeleteMany(objectIDs []string) error {
 	return m.client.DeleteMany(objectIDs)
 }
+
+func (m *MinioService) Test(maxKeys int, startAfter string) {
+	m.client.Test(maxKeys, startAfter)
+}
+
+// func(m *MinioService) Paginate(userID int) error{
+// 	keys, err := m.repo.GetKeys(userID)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	pastas, err := m.GetMany(keys)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// }

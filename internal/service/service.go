@@ -23,6 +23,7 @@ type Minio interface {
 	GetMany(objectIDs []string) ([]string, error)
 	DeleteOne(hash string) error
 	DeleteMany(objectIDs []string) error
+	Test(maxKeys int, startAfter string)
 }
 
 type DBMinio interface {

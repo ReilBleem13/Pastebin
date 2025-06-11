@@ -27,6 +27,7 @@ type Client interface {
 	GetMany(objectIDs []string) ([]string, error)
 	DeleteOne(objectID string) error
 	DeleteMany(objectIDs []string) error
+	Test(maxKeys int, startAfter string)
 }
 
 type minioClient struct {

@@ -304,3 +304,18 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 
 	c.JSON(200, gin.H{"status": "deleted"})
 }
+
+func (h *Handler) PaginatePastaHandler(c *gin.Context) {
+	/*
+		1. По id клиента получить все ключи
+		2. getmany
+	*/
+
+	// userID, err := h.GetUserID(c)
+	// if err != nil {
+	// 	c.JSON(403, gin.H{"error": err.Error()})
+	// 	return
+	// }
+
+	h.servises.Minio.Test(2, "")
+}

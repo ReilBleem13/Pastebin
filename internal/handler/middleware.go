@@ -16,6 +16,18 @@ const (
 	visibilityCtx       = "visibility"
 )
 
+func (h *Handler) AuthMiddleWare2() gin.HandlerFunc {
+	return func(c *gin.Context) {
+
+		var isToken bool
+
+		header := c.GetHeader(authorizationHeader)
+		if len(header) == 0 {
+			isToken = true
+		}
+	}
+}
+
 func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader(authorizationHeader)
