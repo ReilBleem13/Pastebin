@@ -29,11 +29,16 @@ type PasteWithData struct {
 	Metadata Paste  `json:"metadata,omitempty"`
 }
 
+type PastaPaginated struct {
+	Number int    `json:"#"`
+	Pasta  string `json:"Pasta"`
+}
+
 /*
 1. добавить raw
 2. логика для пароля +
 3. фоновое удаление
-4. добавить: удаление +, изменение, пагинацию своих паст для юзера
+4. добавить: удаление, пагинацию своих паст для юзера +
 5. views
 6. добавить поиск по ключевым словам
 7. привести код в красивое состояние

@@ -8,6 +8,7 @@ import (
 	"log"
 	"pastebin/internal/models"
 	"pastebin/pkg/helpers"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,8 +16,12 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-func (m *minioClient) CreateOne(data []byte) (models.Paste, error) {
-	objectID := uuid.New().String() + ".txt"
+func prtStr(s string) *string {
+	return &s
+}
+
+func (m *minioClient) CreateOne(owner string, data []byte, isPassword map[string]string) (models.Paste, error) {
+	objectID := owner + uuid.New().String() + ".txt"
 	content := bytes.NewReader(data)
 
 	_, err := m.mc.PutObject(
@@ -25,8 +30,11 @@ func (m *minioClient) CreateOne(data []byte) (models.Paste, error) {
 		objectID,
 		content,
 		int64(len(data)),
-		minio.PutObjectOptions{},
+		minio.PutObjectOptions{
+			UserMetadata: isPassword,
+		},
 	)
+
 	if err != nil {
 		return models.Paste{}, fmt.Errorf("error occured while creating object: %v", err)
 	}
@@ -211,10 +219,10 @@ type Paste struct {
 	LastModified string
 }
 
-func (m *minioClient) Test(maxKeys int, startAfter string) {
+func (m *minioClient) Paginate(maxKeys int, startAfter, prefix string) ([]string, string, error) {
 	opts := minio.ListObjectsOptions{
 		Recursive:  true,
-		Prefix:     "",
+		Prefix:     prefix,
 		MaxKeys:    maxKeys,
 		StartAfter: startAfter,
 	}
@@ -228,23 +236,128 @@ func (m *minioClient) Test(maxKeys int, startAfter string) {
 			break
 		}
 		if object.Err != nil {
-			log.Fatalf("failed to list objects: %v", object.Err)
+			return []string{}, "", fmt.Errorf("failed to list objects: %v", object.Err)
 		}
+
+		objInfo, err := m.mc.StatObject(context.Background(), m.cfg.BucketName, object.Key, minio.StatObjectOptions{})
+		if err != nil {
+			return []string{}, "", err
+		}
+
+		hashPassword, exists := objInfo.UserMetadata["Has_password"]
+		if exists && hashPassword == "true" {
+			log.Printf("Skipping paste %s with password", object.Key)
+			continue
+		}
+
 		keys = append(keys, object.Key)
 	}
 
-	nextToken := ""
+	nextKey := ""
 	if len(keys) == maxKeys {
-		nextToken = keys[len(keys)-1]
+		nextKey = keys[len(keys)-1]
 	}
 
 	pastas, err := m.GetMany(keys)
 	if err != nil {
-		log.Fatalf("error: %v", err)
+		return []string{}, "", err
 	}
 
-	for i, pasta := range pastas {
-		log.Printf("#%d: %s", i, pasta)
+	return pastas, nextKey, nil
+}
+
+func (m *minioClient) PaginateByUserID(maxKeys int, startAfter, prefix string) ([]string, string, error) {
+	optsPublic := minio.ListObjectsOptions{
+		Recursive:  true,
+		Prefix:     "public:" + prefix,
+		MaxKeys:    maxKeys,
+		StartAfter: startAfter,
 	}
-	log.Println("TOKEN", nextToken)
+
+	optsPrivate := minio.ListObjectsOptions{
+		Recursive:  true,
+		Prefix:     "private:" + prefix,
+		MaxKeys:    maxKeys,
+		StartAfter: startAfter,
+	}
+
+	type keyInfo struct {
+		key  string
+		time time.Time
+	}
+
+	keyCh := make(chan keyInfo, maxKeys*2)
+	errCh := make(chan error, 2)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		objectCh := m.mc.ListObjects(context.Background(), m.cfg.BucketName, optsPublic)
+		for object := range objectCh {
+			if object.Err != nil {
+				errCh <- object.Err
+				return
+			}
+			keyCh <- keyInfo{key: object.Key, time: object.LastModified}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		objectCh := m.mc.ListObjects(context.Background(), m.cfg.BucketName, optsPrivate)
+		for object := range objectCh {
+			if object.Err != nil {
+				errCh <- object.Err
+				return
+			}
+			keyCh <- keyInfo{key: object.Key, time: object.LastModified}
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(keyCh)
+		close(errCh)
+	}()
+
+	collectedKeys := []keyInfo{}
+collectLoop:
+	for {
+		select {
+		case err, ok := <-errCh:
+			if ok && err != nil {
+				return nil, "", err
+			}
+		case ki, ok := <-keyCh:
+			if !ok {
+				break collectLoop
+			}
+			collectedKeys = append(collectedKeys, ki)
+			if len(collectedKeys) >= maxKeys {
+				break collectLoop
+			}
+		}
+	}
+
+	sort.Slice(collectedKeys, func(i, j int) bool {
+		return collectedKeys[i].time.After(collectedKeys[j].time)
+	})
+
+	keys := make([]string, len(collectedKeys))
+	for i, k := range collectedKeys {
+		keys[i] = k.key
+	}
+
+	nextKey := ""
+	if len(keys) == maxKeys {
+		nextKey = keys[len(keys)-1]
+	}
+
+	pastas, err := m.GetMany(keys)
+	if err != nil {
+		return []string{}, "", err
+	}
+	return pastas, nextKey, nil
 }

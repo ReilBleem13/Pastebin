@@ -17,13 +17,14 @@ type Authorization interface {
 }
 
 type Minio interface {
-	CreateOne(ctx context.Context, data []byte) (models.Paste, error)
+	CreateOne(ctx context.Context, userID int, visibility, password *string, data []byte) (models.Paste, error)
 	CreateMany(files map[string]helpers.FileDataType) ([]string, error)
 	GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error
 	GetMany(objectIDs []string) ([]string, error)
 	DeleteOne(hash string) error
 	DeleteMany(objectIDs []string) error
-	Test(maxKeys int, startAfter string)
+
+	Paginate(maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error)
 }
 
 type DBMinio interface {

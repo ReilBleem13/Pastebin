@@ -21,13 +21,15 @@ var AppConfig *Config
 
 type Client interface {
 	InitMinio() error
-	CreateOne(data []byte) (models.Paste, error)
+	CreateOne(owner string, data []byte, isPassword map[string]string) (models.Paste, error)
 	CreateMany(map[string]helpers.FileDataType) ([]string, error)
 	GetOne(objectID string) (string, error)
 	GetMany(objectIDs []string) ([]string, error)
 	DeleteOne(objectID string) error
 	DeleteMany(objectIDs []string) error
-	Test(maxKeys int, startAfter string)
+
+	Paginate(maxKeys int, startAfter, prefix string) ([]string, string, error)
+	PaginateByUserID(maxKeys int, startAfter, prefix string) ([]string, string, error)
 }
 
 type minioClient struct {

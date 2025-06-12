@@ -11,6 +11,8 @@ import (
 	"pastebin/internal/repository/minio"
 	"pastebin/internal/repository/redis"
 	"pastebin/pkg/helpers"
+	"pastebin/pkg/validate"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,10 +32,30 @@ func NewMinioService(minio minio.Client, redis redis.Redis, repo database.Minio)
 	}
 }
 
-func (m *MinioService) CreateOne(ctx context.Context, data []byte) (models.Paste, error) {
-	pasta, err := m.client.CreateOne(data)
+func (m *MinioService) CreateOne(ctx context.Context, userID int, visibility, password *string, data []byte) (models.Paste, error) {
+	if visibility != nil {
+		if !validate.CheckContains(validate.SupportedVisibilities, *visibility) {
+			return models.Paste{}, fmt.Errorf("invalid visibility format: %v", *visibility)
+		}
+	} else {
+		visibility = prtSrt("public")
+	}
+
+	owner := fmt.Sprintf("%d", userID)
+	if owner != "0" {
+		owner = fmt.Sprintf("%s:user:%s:", *visibility, owner)
+	} else {
+		owner = "public:"
+	}
+
+	userMetadata := map[string]string{"has_password": "false"}
+	if password != nil {
+		userMetadata["has_password"] = "true"
+	}
+
+	pasta, err := m.client.CreateOne(owner, data, userMetadata)
 	if err != nil {
-		return models.Paste{}, fmt.Errorf("unable ti save the file: %v", err)
+		return models.Paste{}, fmt.Errorf("unable to save the file: %v", err)
 	}
 	hash := sha256.Sum256([]byte(pasta.Key))
 	hashStr := hex.EncodeToString(hash[:])
@@ -42,11 +64,6 @@ func (m *MinioService) CreateOne(ctx context.Context, data []byte) (models.Paste
 	if err := m.redis.AddText(ctx, pasta.Hash, data); err != nil {
 		return models.Paste{}, err
 	}
-
-	// if err := m.redis.AddMeta(ctx, &pasta); err != nil {
-	// 	return models.Paste{}, err
-	// }
-
 	return pasta, nil
 }
 
@@ -164,19 +181,55 @@ func (m *MinioService) DeleteMany(objectIDs []string) error {
 	return m.client.DeleteMany(objectIDs)
 }
 
-func (m *MinioService) Test(maxKeys int, startAfter string) {
-	m.client.Test(maxKeys, startAfter)
+// обработать случай когда авторизованый юзер запрашивает свои пасты
+func (m *MinioService) Paginate(maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error) {
+	var prefix string
+	var maxKeysInt int
+
+	if maxKeys != "" {
+		var err error
+		maxKeysInt, err = strconv.Atoi(maxKeys)
+		if err != nil {
+			return []models.PastaPaginated{}, "", fmt.Errorf("invalid maxkeys format: %v", err)
+		}
+
+		if maxKeysInt < 5 {
+			maxKeysInt = 5
+		}
+	} else {
+		maxKeysInt = 5
+	}
+
+	if userID != nil {
+		prefix = fmt.Sprintf("user:%d", *userID)
+		pastas, nextKey, err := m.client.PaginateByUserID(maxKeysInt, startAfter, prefix)
+		if err != nil {
+			return []models.PastaPaginated{}, "", err
+		}
+		responses := formResponse(pastas)
+		return responses, nextKey, nil
+	} else {
+		prefix = "public"
+	}
+
+	pastas, nextKey, err := m.client.Paginate(maxKeysInt, startAfter, prefix)
+	if err != nil {
+		return []models.PastaPaginated{}, "", err
+	}
+
+	responses := formResponse(pastas)
+	return responses, nextKey, nil
 }
 
-// func(m *MinioService) Paginate(userID int) error{
-// 	keys, err := m.repo.GetKeys(userID)
-// 	if err != nil {
-// 		return err
-// 	}
+func formResponse(pastas []string) []models.PastaPaginated {
+	var responses []models.PastaPaginated
 
-// 	pastas, err := m.GetMany(keys)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// }
+	for i, pasta := range pastas {
+		response := models.PastaPaginated{
+			Number: i + 1,
+			Pasta:  pasta,
+		}
+		responses = append(responses, response)
+	}
+	return responses
+}

@@ -49,11 +49,11 @@ func (p *DBMinioService) CreatePasta(req dto.RequestCreatePasta, pasta *models.P
 	}
 	pasta.ExpiresAt = time.Now().Add(time.Duration(key) * time.Millisecond)
 
-	if req.Password == "" {
+	if req.Password == nil {
 		return p.repo.CreatePasta(pasta)
 	}
 
-	hashPassword, err := utils.HashPassword(req.Password)
+	hashPassword, err := utils.HashPassword(*req.Password)
 	if err != nil {
 		return err
 	}

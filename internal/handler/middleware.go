@@ -2,6 +2,8 @@ package handler
 
 import (
 	"errors"
+	"log"
+	"net/http"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
 	"strings"
@@ -16,87 +18,82 @@ const (
 	visibilityCtx       = "visibility"
 )
 
-func (h *Handler) AuthMiddleWare2() gin.HandlerFunc {
-	return func(c *gin.Context) {
-
-		var isToken bool
-
-		header := c.GetHeader(authorizationHeader)
-		if len(header) == 0 {
-			isToken = true
-		}
-	}
-}
-
 func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader(authorizationHeader)
-		if len(header) == 0 {
-			c.JSON(401, gin.H{
-				"error": "token is empty",
-			})
-			c.Abort()
-			return
-		}
-
-		if !strings.HasPrefix(header, "Bearer ") {
-			c.JSON(401, gin.H{
-				"error": "invalid token prefix",
-			})
-			c.Abort()
+		if header == "" || !strings.HasPrefix(header, "Bearer ") {
+			c.Next()
 			return
 		}
 
 		token := strings.TrimPrefix(header, "Bearer ")
-
 		claims, err := utils.VerifyAccessToken(token)
 		if err != nil {
-			c.JSON(401, gin.H{
-				"error": "failed to verify access token",
-			})
-			c.Abort()
+			log.Printf("AuthMiddleWare. Error: %v", err)
+			c.Next()
 			return
 		}
+
 		c.Set(userCtx, claims.UserID)
 		c.Next()
 	}
 }
 
-func (h *Handler) AccessMiddleWare() gin.HandlerFunc {
+func (h *Handler) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method == "POST" {
-			var request dto.RequestCreatePasta
-			if err := c.BindJSON(&request); err != nil {
-				c.JSON(400, gin.H{"error": err})
+		userID, exists := c.Get(userCtx)
+		if !exists || userID == nil {
+			c.JSON(401, gin.H{"error": "unauthorized"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method == http.MethodPost {
+			var req dto.RequestCreatePasta
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"error": "invalid request" + err.Error()})
 				c.Abort()
 				return
 			}
-			c.Set("request", request)
 
-			if request.Visibility != nil {
-				if *request.Visibility == "private" {
-					h.AuthMiddleWare()(c)
-					if c.IsAborted() {
-						return
-					}
+			c.Set(requestCtx, req)
+
+			if req.Visibility != nil && *req.Visibility == "private" {
+				userID, exists := c.Get(userCtx)
+				if !exists || userID == nil {
+					c.JSON(401, gin.H{"error": "unathorized: private pastas require login"})
+					c.Abort()
+					return
 				}
 			}
 			c.Next()
 			return
 		}
+	}
+}
 
+func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		hash := c.Param("objectID")
 		visibility, err := h.servises.DBMinio.GetVisibility(hash)
 		if err != nil {
-			c.JSON(400, gin.H{"error": err})
+			c.JSON(400, gin.H{"error": err.Error()})
 			c.Abort()
 			return
 		}
+
 		c.Set(visibilityCtx, visibility)
 
 		if visibility == "private" {
-			h.AuthMiddleWare()(c)
-			if c.IsAborted() {
+			userID, exists := c.Get(userCtx)
+			if !exists || userID == nil {
+				c.JSON(401, gin.H{"error": "unauthorized: private pasta"})
+				c.Abort()
 				return
 			}
 		}

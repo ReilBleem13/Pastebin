@@ -19,20 +19,25 @@ func NewHandler(servises service.Service) *Handler {
 func (h *Handler) InitRoutes() *gin.Engine {
 	router := gin.New()
 
-	mainRouter := router.Group("/files")
-	mainRouter.Use(h.AccessMiddleWare())
+	auth := router.Group("/")
+	auth.Use(h.AuthMiddleWare())
 	{
-		mainRouter.POST("/", h.CreatePastaHandler)
-		mainRouter.GET("/:objectID", h.GetPastaHandler)
-		mainRouter.DELETE("/:objectID", h.DeletePastaHandler)
+		auth.POST("/create", h.AccessPostMiddleware(), h.CreatePastaHandler) // обработк ошибки при пустом json
+
+		auth.GET("/receive/:objectID", h.AccessByKeyMiddleware(), h.GetPastaHandler)
+		auth.GET("/out", h.PaginatePublicHandler)
+		auth.GET("/out/me", h.RequireAuth(), h.PaginateUserIdHandler)
+
+		auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
 	}
 
-	signUpIn := router.Group("/auth")
+	router.GET("/test", h.PaginatePublicHandler)
+
+	start := router.Group("/auth")
 	{
-		signUpIn.POST("/sign-up", h.SignUp)
-		signUpIn.POST("/sign-in", h.SignIn)
+		start.POST("/sign-up", h.SignUp)
+		start.POST("/sign-in", h.SignIn)
 	}
 
-	router.GET("/test", h.PaginatePastaHandler)
 	return router
 }

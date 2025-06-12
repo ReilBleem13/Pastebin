@@ -30,7 +30,7 @@ type SuccessGetResponse struct {
 }
 
 const (
-	urlForGet = "http://localhost:8080/files/"
+	urlForGet = "http://localhost:8080/receive/"
 )
 
 /*
@@ -62,7 +62,7 @@ func (h *Handler) CreatePastaHandler(c *gin.Context) {
 
 	reqData := []byte(req.Message)
 	ctx := context.Background()
-	pasta, err := h.servises.Minio.CreateOne(ctx, reqData)
+	pasta, err := h.servises.Minio.CreateOne(ctx, userID, req.Visibility, req.Password, reqData)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -305,17 +305,40 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "deleted"})
 }
 
-func (h *Handler) PaginatePastaHandler(c *gin.Context) {
-	/*
-		1. По id клиента получить все ключи
-		2. getmany
-	*/
+func (h *Handler) PaginatePublicHandler(c *gin.Context) {
+	maxKeys := c.Query("offset")
+	startAfter := c.Query("starting_from")
 
-	// userID, err := h.GetUserID(c)
-	// if err != nil {
-	// 	c.JSON(403, gin.H{"error": err.Error()})
-	// 	return
-	// }
+	result, nextKey, err := h.servises.Minio.Paginate(maxKeys, startAfter, nil)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
 
-	h.servises.Minio.Test(2, "")
+	c.JSON(200, gin.H{
+		"nextKey": nextKey,
+		"pastas":  result,
+	})
+}
+
+func (h *Handler) PaginateUserIdHandler(c *gin.Context) {
+	userID, err := h.GetUserID(c)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	maxKeys := c.Query("offset")
+	startAfter := c.Query("starting_from")
+
+	result, nextKey, err := h.servises.Minio.Paginate(maxKeys, startAfter, &userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"nextKey": nextKey,
+		"pastas":  result,
+	})
 }

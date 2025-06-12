@@ -25,7 +25,6 @@ func (m *MinioPostgres) CreatePasta(pasta *models.Paste) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("user_id: %v", pasta.UserID)
 	return nil
 }
 

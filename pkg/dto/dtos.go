@@ -5,7 +5,7 @@ type RequestCreatePasta struct {
 	Language   *string `json:"language"`
 	Expiration string  `json:"expiration"`
 	Visibility *string `json:"visibility"`
-	Password   string  `json:"password"`
+	Password   *string `json:"password"`
 }
 
 type RequestNewUser struct {
