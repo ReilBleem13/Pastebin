@@ -12,16 +12,16 @@ type User struct {
 
 type Paste struct {
 	ID           int       `json:"-"`
-	Hash         string    `json:"hash" db:"hash"`
-	Key          string    `json:"key" db:"key"`
+	Hash         string    `json:"hash,omitempty" db:"hash"`
+	Key          string    `json:"key,omitempty" db:"key"`
 	UserID       int       `json:"user_id,omitempty" db:"user_id"`
 	Size         int       `json:"size" db:"size"`
 	Language     *string   `json:"language" db:"language"`
 	Visibility   *string   `json:"visibility" db:"visibility"`
-	Views        int       `json:"views" db:"views"`
+	Views        int       `json:"views,omitempty" db:"views"`
 	PasswordHash string    `json:"-" db:"password_hash"`
 	CreatedAt    time.Time `json:"created_at" db:"created_at"`
-	ExpiresAt    time.Time `json:"expired_at" db:"expires_at"`
+	ExpiresAt    time.Time `json:"expires_at" db:"expires_at"`
 }
 
 type PasteWithData struct {
@@ -36,10 +36,9 @@ type PastaPaginated struct {
 
 /*
 1. добавить raw
-2. логика для пароля +
-3. фоновое удаление
-4. добавить: удаление, пагинацию своих паст для юзера +
-5. views
-6. добавить поиск по ключевым словам
-7. привести код в красивое состояние
+2. фоновое удаление (изменить docker, поправить функцию + добавить expires в minio)
+3. Добавить обработку ошибок в бд
+4. Добавить логирование...
+5. добавить поиск по ключевым словам
+6. привести код в красивое состояние
 */

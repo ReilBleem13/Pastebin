@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"pastebin/internal/models"
 
 	"github.com/jmoiron/sqlx"
@@ -47,15 +46,12 @@ func (m *MinioPostgres) GetVisibility(hash string) (string, error) {
 }
 
 func (m *MinioPostgres) GetAll(pasta *models.Paste) error {
-	log.Println(200)
 	err := m.db.Get(pasta, fmt.Sprintf(
 		`	SELECT hash, key, user_id, size, language, visibility, views, created_at, expires_at 
 			FROM %s WHERE key = $1`, pastasTables), pasta.Key)
 	if err != nil {
-		log.Println(err)
 		return err
 	}
-	log.Println(100, pasta.Visibility, pasta.Language)
 	return nil
 }
 

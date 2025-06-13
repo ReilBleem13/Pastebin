@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 type MinioService struct {
@@ -72,7 +71,6 @@ func (m *MinioService) CreateMany(files map[string]helpers.FileDataType) ([]stri
 }
 
 func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error {
-	start := time.Now()
 	err := m.redis.GetText(ctx, pasta, keyData)
 	if err != nil {
 		if strings.Contains(err.Error(), "key doesn't exists") {
@@ -90,13 +88,10 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 			return err
 		}
 	}
-	log.Println("Обработка текста в сервисе. Время:", time.Since(start).Seconds())
 	return nil
 }
 
 func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error {
-	start := time.Now()
-
 	key, err := m.repo.GetLink(pasta.Metadata.Hash)
 	if err != nil {
 		return err
@@ -113,11 +108,12 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 		if err := m.GetText(ctx, pasta, keyData); err != nil {
 			return err
 		}
-
-		if err := m.repo.AddViews(pasta.Metadata.Hash); err != nil {
+		views, err := m.redis.Views(ctx, pasta.Metadata.Hash)
+		if err != nil {
 			return err
 		}
 
+		pasta.Metadata.Views = views
 		return nil
 	}
 
@@ -158,10 +154,12 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 		return metaErr
 	}
 
-	if err := m.repo.AddViews(pasta.Metadata.Hash); err != nil {
+	views, err := m.redis.Views(ctx, pasta.Metadata.Hash)
+	if err != nil {
 		return err
 	}
-	log.Println("Обработка в сервисе. Время:", time.Since(start).Seconds())
+
+	pasta.Metadata.Views = views
 	return nil
 }
 
@@ -181,7 +179,6 @@ func (m *MinioService) DeleteMany(objectIDs []string) error {
 	return m.client.DeleteMany(objectIDs)
 }
 
-// обработать случай когда авторизованый юзер запрашивает свои пасты
 func (m *MinioService) Paginate(maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error) {
 	var prefix string
 	var maxKeysInt int

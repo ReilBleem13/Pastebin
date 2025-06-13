@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"pastebin/internal/models"
 	"pastebin/pkg/dto"
 
@@ -27,14 +28,20 @@ type Minio interface {
 	GetKeys(userID int) ([]string, error)
 }
 
+type System interface {
+	DeleteExriredMetadata(ctx context.Context) (int, error)
+}
+
 type Repository struct {
 	Authorization
 	Minio
+	System
 }
 
 func NewRepository(db *sqlx.DB) *Repository {
 	return &Repository{
 		Authorization: NewAuthPostgres(db),
 		Minio:         NewMinioPostgres(db),
+		System:        NewSystemPostgres(db),
 	}
 }

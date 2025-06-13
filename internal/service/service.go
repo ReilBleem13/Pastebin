@@ -39,10 +39,13 @@ type DBMinio interface {
 	CheckPrivatePermission(userID int, hash string) (bool, error)
 }
 
+type System interface{}
+
 type Service struct {
 	Authorization
 	Minio
 	DBMinio
+	System
 }
 
 func NewService(repo *database.Repository, minio minio.Client, redis redis.Redis) *Service {
@@ -50,5 +53,6 @@ func NewService(repo *database.Repository, minio minio.Client, redis redis.Redis
 		Authorization: NewAuthService(repo.Authorization),
 		Minio:         NewMinioService(minio, redis, repo.Minio),
 		DBMinio:       NewDBMinioService(repo.Minio, redis),
+		System:        NewSystemSerivce(minio, repo.System),
 	}
 }

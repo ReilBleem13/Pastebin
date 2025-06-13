@@ -17,6 +17,7 @@ type Redis interface {
 	AddMeta(ctx context.Context, pasta *models.Paste) error
 	GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error
 	GetMeta(ctx context.Context, pasta *models.PasteWithData, keyMeta string) error
+	Views(ctx context.Context, hash string) (int, error)
 }
 
 type RedisClient struct {
@@ -39,6 +40,15 @@ func (r *RedisClient) InitRedis() error {
 
 	r.redis = redis
 	return nil
+}
+
+func (r *RedisClient) Views(ctx context.Context, hash string) (int, error) {
+	keyViews := fmt.Sprintf("mets:%s:views", hash)
+	views, err := r.redis.Incr(ctx, keyViews).Result()
+	if err != nil {
+		return 0, err
+	}
+	return int(views), nil
 }
 
 func (r *RedisClient) AddText(ctx context.Context, hash string, data []byte) error {

@@ -16,10 +16,6 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-func prtStr(s string) *string {
-	return &s
-}
-
 func (m *minioClient) CreateOne(owner string, data []byte, isPassword map[string]string) (models.Paste, error) {
 	objectID := owner + uuid.New().String() + ".txt"
 	content := bytes.NewReader(data)
@@ -45,7 +41,6 @@ func (m *minioClient) CreateOne(owner string, data []byte, isPassword map[string
 		Key:       objectID,
 		Size:      int(len(data)),
 	}
-
 	return paste, nil
 }
 

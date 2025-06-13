@@ -3,7 +3,7 @@ package dto
 type RequestCreatePasta struct {
 	Message    string  `json:"message"`
 	Language   *string `json:"language"`
-	Expiration string  `json:"expiration"`
+	Expiration *string `json:"expiration"`
 	Visibility *string `json:"visibility"`
 	Password   *string `json:"password"`
 }

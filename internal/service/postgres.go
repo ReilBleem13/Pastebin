@@ -43,11 +43,15 @@ func (p *DBMinioService) CreatePasta(req dto.RequestCreatePasta, pasta *models.P
 		pasta.Visibility = prtSrt("public")
 	}
 
-	key, ok := validate.SupportedTime[req.Expiration]
-	if !ok {
-		return fmt.Errorf("invalid time format")
+	if req.Expiration != nil {
+		key, ok := validate.SupportedTime[*req.Expiration]
+		if !ok {
+			return fmt.Errorf("invalid time format")
+		}
+		pasta.ExpiresAt = time.Now().Add(time.Duration(key) * time.Millisecond)
+	} else {
+		pasta.ExpiresAt = time.Now().Add(time.Duration(validate.SupportedTime["1h"]) * time.Millisecond)
 	}
-	pasta.ExpiresAt = time.Now().Add(time.Duration(key) * time.Millisecond)
 
 	if req.Password == nil {
 		return p.repo.CreatePasta(pasta)
@@ -58,7 +62,6 @@ func (p *DBMinioService) CreatePasta(req dto.RequestCreatePasta, pasta *models.P
 		return err
 	}
 	pasta.PasswordHash = hashPassword
-
 	return p.repo.CreatePasta(pasta)
 }
 
@@ -77,8 +80,9 @@ func (p *DBMinioService) CheckPublicPermission(hash string) (bool, error) {
 	password_hash, err := p.repo.GetHashPassword(hash)
 	if err != nil {
 		if strings.Contains(err.Error(), "password_hash is empty") {
-			return false, fmt.Errorf("password is empty")
+			return false, nil
 		}
+		return false, err
 	}
 	return password_hash != "", nil
 }
@@ -89,6 +93,7 @@ func (p *DBMinioService) CheckPastaPassword(password, hash string) error {
 		if strings.Contains(err.Error(), "password_hash is empty") {
 			return nil
 		}
+		return err
 	}
 
 	if !utils.CheckPasswordHash(password, password_hash) {

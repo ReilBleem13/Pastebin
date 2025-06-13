@@ -69,6 +69,9 @@ func main() {
 	}()
 	log.Println("Server is running...")
 
+	log.Println("Фоновое удаление запущенно!")
+	// database.BackGraundDel(db)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
