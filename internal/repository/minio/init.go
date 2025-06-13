@@ -3,7 +3,6 @@ package minio
 import (
 	"context"
 	"pastebin/internal/models"
-	"pastebin/pkg/helpers"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -19,17 +18,17 @@ type Config struct {
 
 var AppConfig *Config
 
-type Client interface {
+type FileRepository interface {
 	InitMinio() error
-	CreateOne(owner string, data []byte, isPassword map[string]string) (models.Paste, error)
-	CreateMany(map[string]helpers.FileDataType) ([]string, error)
-	GetOne(objectID string) (string, error)
-	GetMany(objectIDs []string) ([]string, error)
-	DeleteOne(objectID string) error
-	DeleteMany(objectIDs []string) error
 
-	Paginate(maxKeys int, startAfter, prefix string) ([]string, string, error)
-	PaginateByUserID(maxKeys int, startAfter, prefix string) ([]string, string, error)
+	StoreFile(ctx context.Context, owner string, data []byte, isPassword map[string]string) (models.Paste, error)
+	GetFile(ctx context.Context, objectID string) (string, error)
+	GetFiles(ctx context.Context, objectIDs []string) ([]string, error)
+	DeleteFile(ctx context.Context, objectID string) error
+	DeleteFiles(ctx context.Context, objectIDs []string) error
+
+	PaginateFiles(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error)
+	PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error)
 }
 
 type minioClient struct {
@@ -37,7 +36,7 @@ type minioClient struct {
 	cfg Config
 }
 
-func NewMinioClient(cfg Config) Client {
+func NewMinioClient(cfg Config) FileRepository {
 	return &minioClient{
 		cfg: cfg,
 	}

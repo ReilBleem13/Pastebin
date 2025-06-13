@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
 
@@ -9,6 +10,7 @@ import (
 
 func (h *Handler) SignUp(c *gin.Context) {
 	var request dto.RequestNewUser
+	ctx := context.Background()
 
 	if err := c.BindJSON(&request); err != nil {
 		c.JSON(400, gin.H{
@@ -25,7 +27,7 @@ func (h *Handler) SignUp(c *gin.Context) {
 		return
 	}
 	request.Password = hashPassword
-	if err := h.servises.Authorization.CreateNewUser(&request); err != nil {
+	if err := h.servises.Authorization.CreateNewUser(ctx, &request); err != nil {
 		c.JSON(400, gin.H{
 			"error": err,
 		})
@@ -37,16 +39,17 @@ func (h *Handler) SignUp(c *gin.Context) {
 }
 
 func (h *Handler) SignIn(c *gin.Context) {
+	ctx := context.Background()
 	var request dto.LoginUser
 	if err := c.BindJSON(&request); err != nil {
 		c.JSON(400, gin.H{"error": err})
 		return
 	}
-	if err := h.servises.Authorization.CheckLogin(&request); err != nil {
+	if err := h.servises.Authorization.CheckLogin(ctx, &request); err != nil {
 		c.JSON(400, gin.H{"error": err})
 		return
 	}
-	accessToken, err := h.servises.Authorization.GenerateToken(&request)
+	accessToken, err := h.servises.Authorization.GenerateToken(ctx, &request)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err})
 		return

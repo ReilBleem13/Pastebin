@@ -7,36 +7,32 @@ import (
 	"pastebin/internal/repository/minio"
 	"pastebin/internal/repository/redis"
 	"pastebin/pkg/dto"
-	"pastebin/pkg/helpers"
 )
 
 type Authorization interface {
-	CreateNewUser(user *dto.RequestNewUser) error
-	CheckLogin(request *dto.LoginUser) error
-	GenerateToken(request *dto.LoginUser) (string, error)
+	CreateNewUser(ctx context.Context, user *dto.RequestNewUser) error
+	CheckLogin(ctx context.Context, request *dto.LoginUser) error
+	GenerateToken(ctx context.Context, request *dto.LoginUser) (string, error)
 }
 
 type Minio interface {
 	CreateOne(ctx context.Context, userID int, visibility, password *string, data []byte) (models.Paste, error)
-	CreateMany(files map[string]helpers.FileDataType) ([]string, error)
 	GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error
-	GetMany(objectIDs []string) ([]string, error)
-	DeleteOne(hash string) error
-	DeleteMany(objectIDs []string) error
-
-	Paginate(maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error)
+	GetMany(ctx context.Context, objectIDs []string) ([]string, error)
+	DeleteOne(ctx context.Context, hash string) error
+	DeleteMany(ctx context.Context, objectIDs []string) error
+	Paginate(ctx context.Context, maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error)
 }
 
 type DBMinio interface {
-	GetLink(hash string) (string, error)
-	CreatePasta(request dto.RequestCreatePasta, pasta *models.Paste) error
-	GetVisibility(hash string) (string, error)
-	GetPastaByUserID(hash string) error
-	AddViews(hash string) error
+	GetLink(ctx context.Context, hash string) (string, error)
+	CreatePasta(ctx context.Context, request dto.RequestCreatePasta, pasta *models.Paste) error
+	GetVisibility(ctx context.Context, hash string) (string, error)
+	AddViews(ctx context.Context, hash string) error
 
-	CheckPublicPermission(hash string) (bool, error)
-	CheckPastaPassword(password, hash string) error
-	CheckPrivatePermission(userID int, hash string) (bool, error)
+	CheckPublicPermission(ctx context.Context, hash string) (bool, error)
+	CheckPastaPassword(ctx context.Context, password, hash string) error
+	CheckPrivatePermission(ctx context.Context, userID int, hash string) (bool, error)
 }
 
 type System interface{}
@@ -48,11 +44,11 @@ type Service struct {
 	System
 }
 
-func NewService(repo *database.Repository, minio minio.Client, redis redis.Redis) *Service {
+func NewService(repo *database.Repository, minio minio.FileRepository, redis redis.Redis) *Service {
 	return &Service{
 		Authorization: NewAuthService(repo.Authorization),
-		Minio:         NewMinioService(minio, redis, repo.Minio),
-		DBMinio:       NewDBMinioService(repo.Minio, redis),
+		Minio:         NewMinioService(minio, redis, repo.MinioMetadata),
+		DBMinio:       NewDBMinioService(repo.MinioMetadata, redis),
 		System:        NewSystemSerivce(minio, repo.System),
 	}
 }

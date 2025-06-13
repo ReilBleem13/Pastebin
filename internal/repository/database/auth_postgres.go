@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"pastebin/pkg/dto"
 
@@ -17,9 +18,9 @@ func NewAuthPostgres(db *sqlx.DB) *AuthPostgres {
 	}
 }
 
-func (a *AuthPostgres) CreateUser(user *dto.RequestNewUser) error {
+func (a *AuthPostgres) CreateUser(ctx context.Context, user *dto.RequestNewUser) error {
 	fmt.Println(user.Name, user.Email, user.Password)
-	_, err := a.db.Exec(fmt.Sprintf("INSERT INTO %s (name, email, password_hash) VALUES($1, $2, $3)", usersTables),
+	_, err := a.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (name, email, password_hash) VALUES($1, $2, $3)", usersTables),
 		user.Name, user.Email, user.Password)
 
 	if err != nil {
@@ -28,18 +29,18 @@ func (a *AuthPostgres) CreateUser(user *dto.RequestNewUser) error {
 	return nil
 }
 
-func (a *AuthPostgres) GetHashPassword(email string) (string, error) {
+func (a *AuthPostgres) GetHashPassword(ctx context.Context, email string) (string, error) {
 	var hashPassword string
-	err := a.db.Get(&hashPassword, fmt.Sprintf("SELECT password_hash FROM %s WHERE email = $1", usersTables), email)
+	err := a.db.GetContext(ctx, &hashPassword, fmt.Sprintf("SELECT password_hash FROM %s WHERE email = $1", usersTables), email)
 	if err != nil {
 		return "", err
 	}
 	return hashPassword, nil
 }
 
-func (a *AuthPostgres) GetUserIDByEmail(email string) (int, error) {
+func (a *AuthPostgres) GetUserIDByEmail(ctx context.Context, email string) (int, error) {
 	var userID int
-	err := a.db.Get(&userID, fmt.Sprintf("SELECT id FROM %s WHERE email = $1", usersTables), email)
+	err := a.db.GetContext(ctx, &userID, fmt.Sprintf("SELECT id FROM %s WHERE email = $1", usersTables), email)
 	if err != nil {
 		return 0, err
 	}

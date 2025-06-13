@@ -9,11 +9,11 @@ import (
 )
 
 type SystemSerivce struct {
-	client minio.Client
+	client minio.FileRepository
 	repo   database.System
 }
 
-func NewSystemSerivce(minio minio.Client, repo database.System) *SystemSerivce {
+func NewSystemSerivce(minio minio.FileRepository, repo database.System) *SystemSerivce {
 	return &SystemSerivce{
 		client: minio,
 		repo:   repo,

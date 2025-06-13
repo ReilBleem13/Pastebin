@@ -55,7 +55,7 @@ func (h *Handler) CreatePastaHandler(c *gin.Context) {
 	}
 
 	pasta.UserID = userID
-	err = h.servises.DBMinio.CreatePasta(req, &pasta)
+	err = h.servises.DBMinio.CreatePasta(ctx, req, &pasta)
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid visibility format") ||
 			strings.Contains(err.Error(), "invalid language format") ||
@@ -122,10 +122,10 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 			return
 		}
 	}
-
+	ctx := context.Background()
 	var needPassword bool
 	if visibility == "private" {
-		exists, err := h.servises.DBMinio.CheckPrivatePermission(userID, hash)
+		exists, err := h.servises.DBMinio.CheckPrivatePermission(ctx, userID, hash)
 		if err != nil {
 			if err.Error() == "no rights" {
 				c.JSON(403, gin.H{"error": err.Error()})
@@ -139,7 +139,7 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 			needPassword = exists
 		}
 	} else {
-		exists, err := h.servises.DBMinio.CheckPublicPermission(hash)
+		exists, err := h.servises.DBMinio.CheckPublicPermission(ctx, hash)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -151,7 +151,7 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 
 	if needPassword {
 		if newRequest.Password != nil {
-			if err := h.servises.DBMinio.CheckPastaPassword(*newRequest.Password, hash); err != nil {
+			if err := h.servises.DBMinio.CheckPastaPassword(ctx, *newRequest.Password, hash); err != nil {
 				if err.Error() == "wrong password" {
 					c.JSON(403, gin.H{"error": err.Error()})
 					return
@@ -171,7 +171,6 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 	data.Metadata.UserID = userID
 	data.Metadata.Visibility = &visibility
 
-	ctx := context.Background()
 	err = h.servises.GetOne(ctx, &data, hasMetadata)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -218,10 +217,11 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 	}
 
 	hash := c.Param("objectID")
+	ctx := context.Background()
 
 	var needPassword bool
 	if visibility == "private" {
-		exists, err := h.servises.DBMinio.CheckPrivatePermission(userID, hash)
+		exists, err := h.servises.DBMinio.CheckPrivatePermission(ctx, userID, hash)
 		if err != nil {
 			if err.Error() == "no rights" {
 				c.JSON(403, gin.H{"error": err.Error()})
@@ -235,7 +235,7 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 			needPassword = exists
 		}
 	} else {
-		exists, err := h.servises.DBMinio.CheckPublicPermission(hash)
+		exists, err := h.servises.DBMinio.CheckPublicPermission(ctx, hash)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -247,7 +247,7 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 
 	if needPassword {
 		if newRequest.Password != nil {
-			if err := h.servises.DBMinio.CheckPastaPassword(*newRequest.Password, hash); err != nil {
+			if err := h.servises.DBMinio.CheckPastaPassword(ctx, *newRequest.Password, hash); err != nil {
 				if err.Error() == "wrong password" {
 					c.JSON(403, gin.H{"error": err.Error()})
 					return
@@ -262,7 +262,7 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 		}
 	}
 
-	if err := h.servises.Minio.DeleteOne(hash); err != nil {
+	if err := h.servises.Minio.DeleteOne(ctx, hash); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -274,7 +274,8 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 	maxKeys := c.Query("offset")
 	startAfter := c.Query("starting_from")
 
-	result, nextKey, err := h.servises.Minio.Paginate(maxKeys, startAfter, nil)
+	ctx := context.Background()
+	result, nextKey, err := h.servises.Minio.Paginate(ctx, maxKeys, startAfter, nil)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -287,6 +288,7 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 }
 
 func (h *Handler) PaginateUserIdHandler(c *gin.Context) {
+	ctx := context.Background()
 	userID, err := h.GetUserID(c)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -296,7 +298,7 @@ func (h *Handler) PaginateUserIdHandler(c *gin.Context) {
 	maxKeys := c.Query("offset")
 	startAfter := c.Query("starting_from")
 
-	result, nextKey, err := h.servises.Minio.Paginate(maxKeys, startAfter, &userID)
+	result, nextKey, err := h.servises.Minio.Paginate(ctx, maxKeys, startAfter, &userID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"pastebin/internal/repository/database"
 	"pastebin/internal/utils"
@@ -18,18 +19,18 @@ func NewAuthService(repo database.Authorization) *AuthService {
 	}
 }
 
-func (a *AuthService) CreateNewUser(user *dto.RequestNewUser) error {
+func (a *AuthService) CreateNewUser(ctx context.Context, user *dto.RequestNewUser) error {
 	if !strings.Contains(user.Email, "@") {
 		return fmt.Errorf("invalid email format")
 	}
 	if len(user.Password) < 10 {
 		return fmt.Errorf("password is short. min: lenght = 10")
 	}
-	return a.repo.CreateUser(user)
+	return a.repo.CreateUser(ctx, user)
 }
 
-func (a *AuthService) CheckLogin(request *dto.LoginUser) error {
-	hashPassword, err := a.repo.GetHashPassword(request.Email)
+func (a *AuthService) CheckLogin(ctx context.Context, request *dto.LoginUser) error {
+	hashPassword, err := a.repo.GetHashPassword(ctx, request.Email)
 	if err != nil {
 		return err
 	}
@@ -41,8 +42,8 @@ func (a *AuthService) CheckLogin(request *dto.LoginUser) error {
 	return nil
 }
 
-func (a *AuthService) GenerateToken(request *dto.LoginUser) (string, error) {
-	id, err := a.repo.GetUserIDByEmail(request.Email)
+func (a *AuthService) GenerateToken(ctx context.Context, request *dto.LoginUser) (string, error) {
+	id, err := a.repo.GetUserIDByEmail(ctx, request.Email)
 	if err != nil {
 		return "", err
 	}

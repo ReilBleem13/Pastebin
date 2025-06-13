@@ -10,7 +10,6 @@ import (
 	"pastebin/internal/repository/database"
 	"pastebin/internal/repository/minio"
 	"pastebin/internal/repository/redis"
-	"pastebin/pkg/helpers"
 	"pastebin/pkg/validate"
 	"strconv"
 	"strings"
@@ -18,12 +17,12 @@ import (
 )
 
 type MinioService struct {
-	client minio.Client
+	client minio.FileRepository
 	redis  redis.Redis
-	repo   database.Minio
+	repo   database.MinioMetadata
 }
 
-func NewMinioService(minio minio.Client, redis redis.Redis, repo database.Minio) *MinioService {
+func NewMinioService(minio minio.FileRepository, redis redis.Redis, repo database.MinioMetadata) *MinioService {
 	return &MinioService{
 		client: minio,
 		redis:  redis,
@@ -52,7 +51,7 @@ func (m *MinioService) CreateOne(ctx context.Context, userID int, visibility, pa
 		userMetadata["has_password"] = "true"
 	}
 
-	pasta, err := m.client.CreateOne(owner, data, userMetadata)
+	pasta, err := m.client.StoreFile(ctx, owner, data, userMetadata)
 	if err != nil {
 		return models.Paste{}, fmt.Errorf("unable to save the file: %v", err)
 	}
@@ -66,15 +65,11 @@ func (m *MinioService) CreateOne(ctx context.Context, userID int, visibility, pa
 	return pasta, nil
 }
 
-func (m *MinioService) CreateMany(files map[string]helpers.FileDataType) ([]string, error) {
-	return m.client.CreateMany(files)
-}
-
 func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error {
 	err := m.redis.GetText(ctx, pasta, keyData)
 	if err != nil {
 		if strings.Contains(err.Error(), "key doesn't exists") {
-			pasta.Text, err = m.client.GetOne(pasta.Metadata.Key)
+			pasta.Text, err = m.client.GetFile(ctx, pasta.Metadata.Key)
 			if err != nil {
 				return err
 			}
@@ -92,7 +87,7 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 }
 
 func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error {
-	key, err := m.repo.GetLink(pasta.Metadata.Hash)
+	key, err := m.repo.GetKeyMetadata(ctx, pasta.Metadata.Hash)
 	if err != nil {
 		return err
 	}
@@ -129,7 +124,7 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 		err := m.redis.GetMeta(ctx, pasta, keyMeta)
 		if err != nil {
 			if strings.Contains(err.Error(), "key doesn't exists") {
-				if err := m.repo.GetAll(&pasta.Metadata); err != nil {
+				if err := m.repo.GetPastaMetadata(ctx, &pasta.Metadata); err != nil {
 					metaErr = err
 					return
 				}
@@ -163,23 +158,23 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 	return nil
 }
 
-func (m *MinioService) GetMany(objectIDs []string) ([]string, error) {
-	return m.client.GetMany(objectIDs)
+func (m *MinioService) GetMany(ctx context.Context, objectIDs []string) ([]string, error) {
+	return m.client.GetFiles(ctx, objectIDs)
 }
 
-func (m *MinioService) DeleteOne(hash string) error {
-	key, err := m.repo.DeleteMetadata(hash)
+func (m *MinioService) DeleteOne(ctx context.Context, hash string) error {
+	key, err := m.repo.DeleteMetadata(ctx, hash)
 	if err != nil {
 		return err
 	}
-	return m.client.DeleteOne(key)
+	return m.client.DeleteFile(ctx, key)
 }
 
-func (m *MinioService) DeleteMany(objectIDs []string) error {
-	return m.client.DeleteMany(objectIDs)
+func (m *MinioService) DeleteMany(ctx context.Context, objectIDs []string) error {
+	return m.client.DeleteFiles(ctx, objectIDs)
 }
 
-func (m *MinioService) Paginate(maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error) {
+func (m *MinioService) Paginate(ctx context.Context, maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error) {
 	var prefix string
 	var maxKeysInt int
 
@@ -199,7 +194,7 @@ func (m *MinioService) Paginate(maxKeys, startAfter string, userID *int) ([]mode
 
 	if userID != nil {
 		prefix = fmt.Sprintf("user:%d", *userID)
-		pastas, nextKey, err := m.client.PaginateByUserID(maxKeysInt, startAfter, prefix)
+		pastas, nextKey, err := m.client.PaginateFilesByUserID(ctx, maxKeysInt, startAfter, prefix)
 		if err != nil {
 			return []models.PastaPaginated{}, "", err
 		}
@@ -209,7 +204,7 @@ func (m *MinioService) Paginate(maxKeys, startAfter string, userID *int) ([]mode
 		prefix = "public"
 	}
 
-	pastas, nextKey, err := m.client.Paginate(maxKeysInt, startAfter, prefix)
+	pastas, nextKey, err := m.client.PaginateFiles(ctx, maxKeysInt, startAfter, prefix)
 	if err != nil {
 		return []models.PastaPaginated{}, "", err
 	}

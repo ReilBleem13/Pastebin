@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -80,7 +81,8 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		hash := c.Param("objectID")
-		visibility, err := h.servises.DBMinio.GetVisibility(hash)
+		ctx := context.Background()
+		visibility, err := h.servises.DBMinio.GetVisibility(ctx, hash)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			c.Abort()

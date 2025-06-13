@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"pastebin/internal/models"
@@ -14,15 +15,15 @@ import (
 )
 
 type DBMinioService struct {
-	repo  database.Minio
+	repo  database.MinioMetadata
 	redis redis.Redis
 }
 
-func NewDBMinioService(repo database.Minio, redis redis.Redis) *DBMinioService {
+func NewDBMinioService(repo database.MinioMetadata, redis redis.Redis) *DBMinioService {
 	return &DBMinioService{repo: repo, redis: redis}
 }
 
-func (p *DBMinioService) CreatePasta(req dto.RequestCreatePasta, pasta *models.Paste) error {
+func (p *DBMinioService) CreatePasta(ctx context.Context, req dto.RequestCreatePasta, pasta *models.Paste) error {
 	if req.Language != nil {
 		if !validate.CheckContains(validate.SupportedLanguages, *req.Language) {
 			return fmt.Errorf("invalid language format: %v", pasta.Language)
@@ -54,7 +55,7 @@ func (p *DBMinioService) CreatePasta(req dto.RequestCreatePasta, pasta *models.P
 	}
 
 	if req.Password == nil {
-		return p.repo.CreatePasta(pasta)
+		return p.repo.CreateMetadata(ctx, pasta)
 	}
 
 	hashPassword, err := utils.HashPassword(*req.Password)
@@ -62,11 +63,11 @@ func (p *DBMinioService) CreatePasta(req dto.RequestCreatePasta, pasta *models.P
 		return err
 	}
 	pasta.PasswordHash = hashPassword
-	return p.repo.CreatePasta(pasta)
+	return p.repo.CreateMetadata(ctx, pasta)
 }
 
-func (p *DBMinioService) CheckPrivatePermission(userID int, hash string) (bool, error) {
-	password_hash, err := p.repo.CheckPermission(userID, hash)
+func (p *DBMinioService) CheckPrivatePermission(ctx context.Context, userID int, hash string) (bool, error) {
+	password_hash, err := p.repo.CheckPermission(ctx, userID, hash)
 	if err != nil {
 		if strings.Contains(err.Error(), "failed to fetch password_hash") {
 			return false, errors.New("no rights")
@@ -76,8 +77,8 @@ func (p *DBMinioService) CheckPrivatePermission(userID int, hash string) (bool, 
 	return password_hash != "", nil
 }
 
-func (p *DBMinioService) CheckPublicPermission(hash string) (bool, error) {
-	password_hash, err := p.repo.GetHashPassword(hash)
+func (p *DBMinioService) CheckPublicPermission(ctx context.Context, hash string) (bool, error) {
+	password_hash, err := p.repo.GetPassword(ctx, hash)
 	if err != nil {
 		if strings.Contains(err.Error(), "password_hash is empty") {
 			return false, nil
@@ -87,8 +88,8 @@ func (p *DBMinioService) CheckPublicPermission(hash string) (bool, error) {
 	return password_hash != "", nil
 }
 
-func (p *DBMinioService) CheckPastaPassword(password, hash string) error {
-	password_hash, err := p.repo.GetHashPassword(hash)
+func (p *DBMinioService) CheckPastaPassword(ctx context.Context, password, hash string) error {
+	password_hash, err := p.repo.GetPassword(ctx, hash)
 	if err != nil {
 		if strings.Contains(err.Error(), "password_hash is empty") {
 			return nil
@@ -102,20 +103,16 @@ func (p *DBMinioService) CheckPastaPassword(password, hash string) error {
 	return nil
 }
 
-func (p *DBMinioService) GetLink(hash string) (string, error) {
-	return p.repo.GetLink(hash)
+func (p *DBMinioService) GetLink(ctx context.Context, hash string) (string, error) {
+	return p.repo.GetKey(ctx, hash)
 }
 
-func (p *DBMinioService) GetVisibility(hash string) (string, error) {
-	return p.repo.GetVisibility(hash)
+func (p *DBMinioService) GetVisibility(ctx context.Context, hash string) (string, error) {
+	return p.repo.GetVisibility(ctx, hash)
 }
 
-func (p *DBMinioService) GetPastaByUserID(hash string) error {
-	return p.repo.GetPastaByUserID(hash)
-}
-
-func (p *DBMinioService) AddViews(hash string) error {
-	return p.repo.AddViews(hash)
+func (p *DBMinioService) AddViews(ctx context.Context, hash string) error {
+	return p.repo.AddViews(ctx, hash)
 }
 
 func prtSrt(s string) *string {
