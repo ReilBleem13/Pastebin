@@ -67,6 +67,14 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 	dataCh := make(chan string, len(keys))
 	errCh := make(chan error, len(keys))
 
+	handleError := func(err error) {
+		select {
+		case errCh <- err:
+		default:
+			cancel()
+		}
+	}
+
 	var wg sync.WaitGroup
 	for _, key := range keys {
 		wg.Add(1)
@@ -76,7 +84,7 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					errCh <- fmt.Errorf("panic in GetFile: %v", r)
+					handleError(fmt.Errorf("panic in GetFile: %v", r))
 				}
 			}()
 
@@ -86,11 +94,7 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 
 			data, err := m.GetFile(ctx, key)
 			if err != nil {
-				select {
-				case errCh <- err:
-				default:
-					cancel()
-				}
+				handleError(err)
 				return
 			}
 
@@ -147,6 +151,14 @@ func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
 	errCh := make(chan error, len(keys))
 	var wg sync.WaitGroup
 
+	handleError := func(err error) {
+		select {
+		case errCh <- err:
+		default:
+			cancel()
+		}
+	}
+
 	for _, key := range keys {
 		wg.Add(1)
 		key := key
@@ -154,7 +166,7 @@ func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					errCh <- fmt.Errorf("panic in DeleteFile: %v", r)
+					handleError(fmt.Errorf("panic in DeleteFile: %v", r))
 				}
 			}()
 
@@ -164,11 +176,8 @@ func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
 
 			err := m.DeleteFile(ctx, key)
 			if err != nil {
-				select {
-				case errCh <- err:
-				default:
-					cancel()
-				}
+				handleError(err)
+				return
 			}
 		}
 	}
@@ -244,7 +253,15 @@ func (m *minioClient) PaginateFiles(ctx context.Context, maxKeys int, startAfter
 	return pastas, nextKey, nil
 }
 
+type keyInfo struct {
+	key  string
+	time time.Time
+}
+
 func (m *minioClient) PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	optsPublic := minio.ListObjectsOptions{
 		Recursive:  true,
 		Prefix:     "public:" + prefix,
@@ -259,38 +276,69 @@ func (m *minioClient) PaginateFilesByUserID(ctx context.Context, maxKeys int, st
 		StartAfter: startAfter,
 	}
 
-	type keyInfo struct {
-		key  string
-		time time.Time
-	}
-
 	keyCh := make(chan keyInfo, maxKeys*2)
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 1)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	handleError := func(err error) {
+		select {
+		case errCh <- err:
+		default:
+			cancel()
+		}
+	}
+
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				handleError(fmt.Errorf("panic in ListObjects: %v", r))
+			}
+		}()
+
+		if ctx.Err() != nil {
+			return
+		}
+
 		objectCh := m.mc.ListObjects(ctx, m.cfg.BucketName, optsPublic)
 		for object := range objectCh {
 			if object.Err != nil {
-				errCh <- object.Err
+				handleError(object.Err)
 				return
 			}
-			keyCh <- keyInfo{key: object.Key, time: object.LastModified}
+			select {
+			case keyCh <- keyInfo{key: object.Key, time: object.LastModified}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				handleError(fmt.Errorf("panic in ListObjects: %v", r))
+			}
+		}()
+
+		if ctx.Err() != nil {
+			return
+		}
+
 		objectCh := m.mc.ListObjects(ctx, m.cfg.BucketName, optsPrivate)
 		for object := range objectCh {
 			if object.Err != nil {
-				errCh <- object.Err
+				handleError(object.Err)
 				return
 			}
-			keyCh <- keyInfo{key: object.Key, time: object.LastModified}
+			select {
+			case keyCh <- keyInfo{key: object.Key, time: object.LastModified}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -335,7 +383,7 @@ collectLoop:
 
 	pastas, err := m.GetFiles(ctx, keys)
 	if err != nil {
-		return []string{}, "", err
+		return nil, "", err
 	}
 	return pastas, nextKey, nil
 }
