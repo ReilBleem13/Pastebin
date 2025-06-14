@@ -44,20 +44,22 @@ func main() {
 		MinioRootUser:     viper.GetString("minio.rootuser"),
 		MinioRootPassword: os.Getenv("MinioRootPassword"),
 		MinioUseSSL:       viper.GetBool("minio.ssl"),
-	})
+	}, 10)
 
 	err = minioClient.InitMinio()
 	if err != nil {
 		log.Fatalf("failed to initialize minio: %s", err.Error())
 	}
 
-	redis := redis.NewRedisClient()
+	redis := redis.NewRedisClient(redis.Config{
+		Addr: viper.GetString("redis.addr"),
+	})
 	err = redis.InitRedis()
 	if err != nil {
 		log.Fatalf("failed to initialize redis: %s", err.Error())
 	}
 
-	repos := database.NewRepository(db)
+	repos := database.NewRepository(db.DB())
 	services := service.NewService(repos, minioClient, redis)
 	handlers := handler.NewHandler(*services)
 
@@ -69,21 +71,18 @@ func main() {
 	}()
 	log.Println("Server is running...")
 
-	log.Println("Фоновое удаление запущенно!")
-	// database.BackGraundDel(db)
-
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("Server is shutting down...")
 
-	if err := srv.Shutdown(context.Background()); err != nil {
-		log.Fatalf("error occured on server shitting down: %s", err.Error())
-	}
+	minioClient.Close()
+	redis.Close()
+	db.Close()
 
-	if err := db.Close(); err != nil {
-		log.Fatalf("error occured on db connection close: %s", err.Error())
+	if err := srv.Shutdown(context.Background()); err != nil {
+		log.Fatalf("error occured on server shutting down: %s", err.Error())
 	}
 }
 

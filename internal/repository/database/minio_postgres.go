@@ -77,17 +77,17 @@ func (m *MinioPostgres) AddViews(ctx context.Context, hash string) error {
 	return nil
 }
 
-func (m *MinioPostgres) CheckPermission(ctx context.Context, userID int, hash string) (string, error) {
+func (m *MinioPostgres) CheckPermission(ctx context.Context, userID int, hash string) (bool, error) {
 	var password_hash string
 
 	err := m.db.GetContext(ctx, &password_hash, fmt.Sprintf("SELECT password_hash FROM %s WHERE user_id = $1 AND hash = $2", pastasTables), userID, hash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", errors.New("failed to fetch password_hash")
+			return false, errors.New("failed to fetch password_hash")
 		}
-		return "", err
+		return false, err
 	}
-	return password_hash, nil
+	return password_hash != "", nil
 }
 
 func (m *MinioPostgres) GetKeys(ctx context.Context, userID int) ([]string, error) {
@@ -106,7 +106,10 @@ func (m *MinioPostgres) DeleteMetadata(ctx context.Context, hash string) (string
 	var key string
 	err := m.db.GetContext(ctx, &key, fmt.Sprintf("DELETE FROM %s WHERE hash = $1 RETURNING key", pastasTables), hash)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("metadata not found for hash: %s", hash)
+		}
 		return "", err
 	}
 	return key, nil
-} // обработку ошибки
+}

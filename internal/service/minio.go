@@ -87,7 +87,7 @@ func (m *MinioService) GetText(ctx context.Context, pasta *models.PasteWithData,
 }
 
 func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error {
-	key, err := m.repo.GetKeyMetadata(ctx, pasta.Metadata.Hash)
+	key, err := m.repo.GetKey(ctx, pasta.Metadata.Hash)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (m *MinioService) GetOne(ctx context.Context, pasta *models.PasteWithData, 
 		err := m.redis.GetMeta(ctx, pasta, keyMeta)
 		if err != nil {
 			if strings.Contains(err.Error(), "key doesn't exists") {
-				if err := m.repo.GetPastaMetadata(ctx, &pasta.Metadata); err != nil {
+				if err := m.repo.GetMetadata(ctx, &pasta.Metadata); err != nil {
 					metaErr = err
 					return
 				}

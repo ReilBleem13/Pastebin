@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"pastebin/internal/models"
 	"sort"
 	"sync"
@@ -67,12 +66,13 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 
 	dataCh := make(chan string, len(keys))
 	errCh := make(chan error, len(keys))
-	sem := make(chan struct{}, 10)
 
 	var wg sync.WaitGroup
 	for _, key := range keys {
 		wg.Add(1)
-		go func(key string) {
+		key := key
+
+		m.pool.Tasks <- func() {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
@@ -81,15 +81,6 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 			}()
 
 			if ctx.Err() != nil {
-				return
-			}
-
-			select {
-			case sem <- struct{}{}:
-				defer func() {
-					<-sem
-				}()
-			case <-ctx.Done():
 				return
 			}
 
@@ -102,11 +93,12 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 				}
 				return
 			}
+
 			select {
 			case dataCh <- data:
 			case <-ctx.Done():
 			}
-		}(key)
+		}
 	}
 
 	go func() {
@@ -157,8 +149,14 @@ func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
 
 	for _, key := range keys {
 		wg.Add(1)
-		go func(key string) {
+		key := key
+		m.pool.Tasks <- func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					errCh <- fmt.Errorf("panic in DeleteFile: %v", r)
+				}
+			}()
 
 			if ctx.Err() != nil {
 				return
@@ -172,7 +170,7 @@ func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
 					cancel()
 				}
 			}
-		}(key)
+		}
 	}
 
 	go func() {
@@ -227,7 +225,6 @@ func (m *minioClient) PaginateFiles(ctx context.Context, maxKeys int, startAfter
 
 		hashPassword, exists := objInfo.UserMetadata["Has_password"]
 		if exists && hashPassword == "true" {
-			log.Printf("Skipping paste %s with password", object.Key)
 			continue
 		}
 

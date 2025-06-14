@@ -24,25 +24,18 @@ type MinioMetadata interface {
 	GetKeys(ctx context.Context, userID int) ([]string, error)
 
 	AddViews(ctx context.Context, hash string) error
-	CheckPermission(ctx context.Context, userID int, hash string) (string, error)
+	CheckPermission(ctx context.Context, userID int, hash string) (bool, error)
 	DeleteMetadata(ctx context.Context, hash string) (string, error)
-}
-
-type System interface {
-	DeleteExriredMetadata(ctx context.Context) (int, error)
 }
 
 type Repository struct {
 	Authorization
 	MinioMetadata
-	System
 }
 
 func NewRepository(db *sqlx.DB) *Repository {
-
 	return &Repository{
 		Authorization: NewAuthPostgres(db),
 		MinioMetadata: NewMinioPostgres(db),
-		System:        NewSystemPostgres(db),
 	}
 }

@@ -18,28 +18,46 @@ type Redis interface {
 	GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error
 	GetMeta(ctx context.Context, pasta *models.PasteWithData, keyMeta string) error
 	Views(ctx context.Context, hash string) (int, error)
+
+	Close() error
+}
+
+type Config struct {
+	Addr string
 }
 
 type RedisClient struct {
 	redis *redis.Client
+	cfg   Config
 }
 
-func NewRedisClient() Redis {
-	return &RedisClient{}
+func NewRedisClient(cfg Config) Redis {
+	return &RedisClient{
+		cfg: cfg,
+	}
 }
 
 func (r *RedisClient) InitRedis() error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	redis := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: r.cfg.Addr,
 	})
 
 	if err := redis.Ping(ctx).Err(); err != nil {
-		return err
+		return fmt.Errorf("failed to connect to redis: %w", err)
 	}
 
 	r.redis = redis
 	return nil
+}
+
+func (r *RedisClient) Close() error {
+	if r.redis == nil {
+		return nil
+	}
+	return r.redis.Close()
 }
 
 func (r *RedisClient) Views(ctx context.Context, hash string) (int, error) {

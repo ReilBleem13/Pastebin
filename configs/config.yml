@@ -12,3 +12,6 @@ minio:
   bucket: "chukki"
   rootuser: "root"
   ssl: false
+
+redis:
+  addr: "localhost:6379"

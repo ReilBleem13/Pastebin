@@ -31,8 +31,6 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
 	}
 
-	router.GET("/test", h.PaginatePublicHandler)
-
 	start := router.Group("/auth")
 	{
 		start.POST("/sign-up", h.SignUp)

@@ -263,6 +263,10 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 	}
 
 	if err := h.servises.Minio.DeleteOne(ctx, hash); err != nil {
+		if strings.Contains(err.Error(), "metadata not found for hash") {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}

@@ -67,14 +67,14 @@ func (p *DBMinioService) CreatePasta(ctx context.Context, req dto.RequestCreateP
 }
 
 func (p *DBMinioService) CheckPrivatePermission(ctx context.Context, userID int, hash string) (bool, error) {
-	password_hash, err := p.repo.CheckPermission(ctx, userID, hash)
+	hasPassword, err := p.repo.CheckPermission(ctx, userID, hash)
 	if err != nil {
 		if strings.Contains(err.Error(), "failed to fetch password_hash") {
 			return false, errors.New("no rights")
 		}
 		return false, err
 	}
-	return password_hash != "", nil
+	return hasPassword, nil
 }
 
 func (p *DBMinioService) CheckPublicPermission(ctx context.Context, hash string) (bool, error) {
