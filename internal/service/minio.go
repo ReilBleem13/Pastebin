@@ -6,10 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"pastebin/internal/domain/repository"
 	"pastebin/internal/models"
-	"pastebin/internal/repository/database"
-	"pastebin/internal/repository/minio"
-	"pastebin/internal/repository/redis"
+
 	"pastebin/pkg/validate"
 	"strconv"
 	"strings"
@@ -17,12 +16,12 @@ import (
 )
 
 type MinioService struct {
-	client minio.FileRepository
-	redis  redis.Redis
-	repo   database.MinioMetadata
+	client repository.FileRepository
+	redis  repository.RedisRepository
+	repo   repository.MinioRepository
 }
 
-func NewMinioService(minio minio.FileRepository, redis redis.Redis, repo database.MinioMetadata) *MinioService {
+func NewMinioService(minio repository.FileRepository, redis repository.RedisRepository, repo repository.MinioRepository) *MinioService {
 	return &MinioService{
 		client: minio,
 		redis:  redis,

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"pastebin/internal/models"
+	"pastebin/internal/domain/repository"
 	"pastebin/pkg/workerpool"
 	"time"
 
@@ -20,28 +20,13 @@ type Config struct {
 	MinioUseSSL       bool
 }
 
-type FileRepository interface {
-	InitMinio() error
-
-	StoreFile(ctx context.Context, owner string, data []byte, isPassword map[string]string) (models.Paste, error)
-	GetFile(ctx context.Context, objectID string) (string, error)
-	GetFiles(ctx context.Context, objectIDs []string) ([]string, error)
-	DeleteFile(ctx context.Context, objectID string) error
-	DeleteFiles(ctx context.Context, objectIDs []string) error
-
-	PaginateFiles(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error)
-	PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error)
-
-	Close()
-}
-
 type minioClient struct {
 	mc   *minio.Client
-	cfg  Config
 	pool *workerpool.WorkerPool
+	cfg  Config
 }
 
-func NewMinioClient(cfg Config, workers int) FileRepository {
+func NewMinioClient(cfg Config, workers int) repository.FileRepository {
 	pool := workerpool.NewWorkerPool(workers)
 	pool.Start()
 
@@ -52,7 +37,6 @@ func NewMinioClient(cfg Config, workers int) FileRepository {
 }
 
 func (m *minioClient) InitMinio() error {
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -64,7 +48,7 @@ func (m *minioClient) InitMinio() error {
 				m.cfg.MinioRootPassword,
 				"",
 			),
-			Secure: m.cfg.MinioUseSSL, // TODO: change if error
+			Secure: m.cfg.MinioUseSSL,
 		},
 	)
 	if err != nil {

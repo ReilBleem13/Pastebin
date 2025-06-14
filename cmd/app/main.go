@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"pastebin/internal/handler"
-	"pastebin/internal/repository/database"
 	"pastebin/internal/repository/minio"
+	"pastebin/internal/repository/postgres"
 	"pastebin/internal/repository/redis"
 	"pastebin/internal/service"
 	"syscall"
@@ -27,7 +27,7 @@ func main() {
 		log.Fatalf("error loading env variables: %s", err.Error())
 	}
 
-	db, err := database.NewPostgresDB(database.Config{
+	db, err := postgres.NewPostgresDB(postgres.Config{
 		Host:     viper.GetString("db.host"),
 		Port:     viper.GetString("db.port"),
 		Username: viper.GetString("db.username"),
@@ -59,8 +59,8 @@ func main() {
 		log.Fatalf("failed to initialize redis: %s", err.Error())
 	}
 
-	repos := database.NewRepository(db.DB())
-	services := service.NewService(repos, minioClient, redis)
+	repo := postgres.NewRepository(db.DB())
+	services := service.NewService(*repo, minioClient, redis)
 	handlers := handler.NewHandler(*services)
 
 	srv := new(handler.Server)

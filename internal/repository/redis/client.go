@@ -5,22 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"pastebin/internal/domain/repository"
 	"pastebin/internal/models"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 )
-
-type Redis interface {
-	InitRedis() error
-	AddText(ctx context.Context, hash string, data []byte) error
-	AddMeta(ctx context.Context, pasta *models.Paste) error
-	GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error
-	GetMeta(ctx context.Context, pasta *models.PasteWithData, keyMeta string) error
-	Views(ctx context.Context, hash string) (int, error)
-
-	Close() error
-}
 
 type Config struct {
 	Addr string
@@ -31,7 +21,7 @@ type RedisClient struct {
 	cfg   Config
 }
 
-func NewRedisClient(cfg Config) Redis {
+func NewRedisClient(cfg Config) repository.RedisRepository {
 	return &RedisClient{
 		cfg: cfg,
 	}

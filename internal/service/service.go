@@ -2,10 +2,9 @@ package service
 
 import (
 	"context"
+	"pastebin/internal/domain/repository"
 	"pastebin/internal/models"
-	"pastebin/internal/repository/database"
-	"pastebin/internal/repository/minio"
-	"pastebin/internal/repository/redis"
+	"pastebin/internal/repository/postgres"
 	"pastebin/pkg/dto"
 )
 
@@ -41,10 +40,10 @@ type Service struct {
 	DBMinio
 }
 
-func NewService(repo *database.Repository, minio minio.FileRepository, redis redis.Redis) *Service {
+func NewService(repo postgres.Repository, minio repository.FileRepository, redis repository.RedisRepository) *Service {
 	return &Service{
-		Authorization: NewAuthService(repo.Authorization),
-		Minio:         NewMinioService(minio, redis, repo.MinioMetadata),
-		DBMinio:       NewDBMinioService(repo.MinioMetadata, redis),
+		Authorization: NewAuthService(repo.Auth),
+		Minio:         NewMinioService(minio, redis, repo.Minio),
+		DBMinio:       NewDBMinioService(repo.Minio, redis),
 	}
 }

@@ -72,6 +72,7 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 		case errCh <- err:
 		default:
 			cancel()
+			return
 		}
 	}
 
@@ -101,6 +102,7 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 			select {
 			case dataCh <- data:
 			case <-ctx.Done():
+				return
 			}
 		}
 	}
@@ -156,6 +158,7 @@ func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
 		case errCh <- err:
 		default:
 			cancel()
+			return
 		}
 	}
 

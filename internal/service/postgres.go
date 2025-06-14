@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"pastebin/internal/domain/repository"
 	"pastebin/internal/models"
-	"pastebin/internal/repository/database"
-	"pastebin/internal/repository/redis"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
 	"pastebin/pkg/validate"
@@ -15,11 +14,11 @@ import (
 )
 
 type DBMinioService struct {
-	repo  database.MinioMetadata
-	redis redis.Redis
+	repo  repository.MinioRepository
+	redis repository.RedisRepository
 }
 
-func NewDBMinioService(repo database.MinioMetadata, redis redis.Redis) *DBMinioService {
+func NewDBMinioService(repo repository.MinioRepository, redis repository.RedisRepository) *DBMinioService {
 	return &DBMinioService{repo: repo, redis: redis}
 }
 

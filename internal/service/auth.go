@@ -3,17 +3,17 @@ package service
 import (
 	"context"
 	"fmt"
-	"pastebin/internal/repository/database"
+	"pastebin/internal/domain/repository"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
 	"strings"
 )
 
 type AuthService struct {
-	repo database.Authorization
+	repo repository.AuthRepository
 }
 
-func NewAuthService(repo database.Authorization) *AuthService {
+func NewAuthService(repo repository.AuthRepository) *AuthService {
 	return &AuthService{
 		repo: repo,
 	}
