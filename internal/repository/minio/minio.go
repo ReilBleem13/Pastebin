@@ -147,6 +147,10 @@ func (m *minioClient) DeleteFile(ctx context.Context, key string) error {
 }
 
 func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

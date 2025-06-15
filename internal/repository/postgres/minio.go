@@ -8,6 +8,7 @@ import (
 	"pastebin/internal/models"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 type minioPostgres struct {
@@ -112,4 +113,30 @@ func (m *minioPostgres) DeleteMetadata(ctx context.Context, hash string) (string
 		return "", err
 	}
 	return key, nil
+}
+
+func (m *minioPostgres) GetKeysExpiredPasta(ctx context.Context) ([]string, error) {
+	var keys []string
+	err := m.db.SelectContext(ctx, &keys, fmt.Sprintf("SELECT key FROM %s WHERE expires_at < NOW()", pastasTables))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return []string{}, errors.New("expired pasta not found")
+		}
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (m *minioPostgres) DeleteExpiredPasta(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	query := fmt.Sprintf("DELETE FROM %s WHERE key = ANY($1)", pastasTables)
+	_, err := m.db.ExecContext(ctx, query, pq.Array(keys))
+	if err != nil {
+		return fmt.Errorf("failed to delete expired pasta: %w", err)
+	}
+
+	return nil
 }

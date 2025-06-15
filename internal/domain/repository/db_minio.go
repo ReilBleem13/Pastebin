@@ -13,8 +13,10 @@ type MinioRepository interface {
 	GetMetadata(ctx context.Context, pasta *models.Paste) error
 	GetPassword(ctx context.Context, hash string) (string, error)
 	GetKeys(ctx context.Context, userID int) ([]string, error)
+	GetKeysExpiredPasta(ctx context.Context) ([]string, error)
 
 	AddViews(ctx context.Context, hash string) error
 	CheckPermission(ctx context.Context, userID int, hash string) (bool, error)
 	DeleteMetadata(ctx context.Context, hash string) (string, error)
+	DeleteExpiredPasta(ctx context.Context, keys []string) error
 }

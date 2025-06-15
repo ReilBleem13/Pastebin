@@ -34,10 +34,15 @@ type DBMinio interface {
 	CheckPrivatePermission(ctx context.Context, userID int, hash string) (bool, error)
 }
 
+type Cleanup interface {
+	CleanupExpiredPasta(ctx context.Context) error
+}
+
 type Service struct {
 	Authorization
 	Minio
 	DBMinio
+	Cleanup
 }
 
 func NewService(repo postgres.Repository, minio repository.FileRepository, redis repository.RedisRepository) *Service {
@@ -45,5 +50,6 @@ func NewService(repo postgres.Repository, minio repository.FileRepository, redis
 		Authorization: NewAuthService(repo.Auth),
 		Minio:         NewMinioService(minio, redis, repo.Minio),
 		DBMinio:       NewDBMinioService(repo.Minio, redis),
+		Cleanup:       NewExpiredDeleteService(repo.Minio, minio),
 	}
 }
