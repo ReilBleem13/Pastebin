@@ -5,62 +5,59 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"pastebin/internal/config"
 	"pastebin/internal/handler"
-	"pastebin/internal/repository/minio"
-	"pastebin/internal/repository/postgres"
-	"pastebin/internal/repository/redis"
+	repostitory "pastebin/internal/repository"
+	"pastebin/internal/repository/cache"
+	"pastebin/internal/repository/database"
+	"pastebin/internal/repository/elasticsearch"
+	"pastebin/internal/repository/s3"
 	"pastebin/internal/service"
+	"pastebin/pkg/logging"
 	"syscall"
 
-	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/spf13/viper"
 )
 
 func main() {
+	logger := logging.GetLogger()
+	cfg := config.GetConfig()
 
-	if err := initConfig(); err != nil {
-		log.Fatalf("error initializing configs: %s", err.Error())
-	}
+	ctx := context.Background()
 
-	if err := godotenv.Load(); err != nil {
-		log.Fatalf("error loading env variables: %s", err.Error())
-	}
-
-	db, err := postgres.NewPostgresDB(postgres.Config{
-		Host:     viper.GetString("db.host"),
-		Port:     viper.GetString("db.port"),
-		Username: viper.GetString("db.username"),
-		DBName:   viper.GetString("db.dbname"),
-		SSLMode:  viper.GetString("db.sslmode"),
-		Password: os.Getenv("DB_PASSWORD"),
-	})
+	// инициализация postgres
+	postgres, err := database.NewPostgresDB(ctx, cfg.Storage)
 	if err != nil {
-		log.Fatalf("failed to initialize db: %s", err.Error())
+		logger.Fatalf("failed to initialize postgres: %v", err)
 	}
-	minioClient := minio.NewMinioClient(minio.Config{
-		MinioEndPoint:     viper.GetString("minio.endpoint"),
-		BucketName:        viper.GetString("minio.bucket"),
-		MinioRootUser:     viper.GetString("minio.rootuser"),
-		MinioRootPassword: os.Getenv("MinioRootPassword"),
-		MinioUseSSL:       viper.GetBool("minio.ssl"),
-	}, 10)
 
-	err = minioClient.InitMinio()
+	// инициализация minio
+	minio, err := s3.NewMinioClient(ctx, cfg.Minio, 10)
 	if err != nil {
-		log.Fatalf("failed to initialize minio: %s", err.Error())
+		logger.Fatalf("failed to initialize minio: %v", err)
 	}
 
-	redis := redis.NewRedisClient(redis.Config{
-		Addr: viper.GetString("redis.addr"),
-	})
-	err = redis.InitRedis()
+	// инициализация redis
+	redis, err := cache.NewRedisClient(ctx, cfg.Redis)
 	if err != nil {
-		log.Fatalf("failed to initialize redis: %s", err.Error())
+		logger.Fatalf("failed to initialize redis: %v", err)
 	}
 
-	repo := postgres.NewRepository(db.DB())
-	services := service.NewService(*repo, minioClient, redis)
+	// инициализация elastic
+	elastic, err := elasticsearch.NewElasticClient(cfg.Elastic)
+	if err != nil {
+		logger.Fatalf("failed to initialize elasticsearch: %v", err)
+	}
+	if err := elastic.EnsureIndex(cfg.Elastic.Index); err != nil {
+		logger.Fatalf("failed to create elasticsearch index: %v", err)
+	}
+
+	// инициализация repository
+	repo := repostitory.NewRepository(postgres.Client(), redis.Client(),
+		minio.Client(), elastic.Client(), minio.Pool(), cfg.Minio.Bucket)
+
+	services := service.NewService(*repo, minio, redis, elastic)
 	handlers := handler.NewHandler(*services)
 
 	srv := new(handler.Server)
@@ -69,25 +66,21 @@ func main() {
 			log.Fatalf("error occured while running http server; %s", err.Error())
 		}
 	}()
-	log.Println("Server is running...")
+
+	logger.Info("Server is running...")
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Server is shutting down...")
+	logger.Info("Server is shutting down...")
 
-	minioClient.Close()
+	// зактрытие инфраструктуры
+	postgres.Close()
 	redis.Close()
-	db.Close()
+	minio.Close(ctx)
 
 	if err := srv.Shutdown(context.Background()); err != nil {
 		log.Fatalf("error occured on server shutting down: %s", err.Error())
 	}
-}
-
-func initConfig() error {
-	viper.AddConfigPath("configs")
-	viper.SetConfigName("config")
-	return viper.ReadInConfig()
 }

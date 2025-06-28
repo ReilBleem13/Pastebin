@@ -16,16 +16,18 @@ import (
 )
 
 type MinioService struct {
-	client repository.FileRepository
-	redis  repository.RedisRepository
-	repo   repository.MinioRepository
+	client  repository.FileRepository
+	redis   repository.RedisRepository
+	repo    repository.MinioRepository
+	elastic repository.ElasticRepository
 }
 
-func NewMinioService(minio repository.FileRepository, redis repository.RedisRepository, repo repository.MinioRepository) *MinioService {
+func NewMinioService(minio repository.FileRepository, redis repository.RedisRepository, repo repository.MinioRepository, elastic repository.ElasticRepository) *MinioService {
 	return &MinioService{
-		client: minio,
-		redis:  redis,
-		repo:   repo,
+		client:  minio,
+		redis:   redis,
+		repo:    repo,
+		elastic: elastic,
 	}
 }
 
@@ -59,6 +61,10 @@ func (m *MinioService) CreateOne(ctx context.Context, userID int, visibility, pa
 	pasta.Hash = hashStr
 
 	if err := m.redis.AddText(ctx, pasta.Hash, data); err != nil {
+		return models.Paste{}, err
+	}
+
+	if err := m.elastic.NewIndex(&data, pasta.Key, m.elastic.GetIndex(), nil); err != nil {
 		return models.Paste{}, err
 	}
 	return pasta, nil

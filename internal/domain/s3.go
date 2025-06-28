@@ -1,13 +1,11 @@
-package repository
+package domain
 
 import (
 	"context"
 	"pastebin/internal/models"
 )
 
-type FileRepository interface {
-	InitMinio() error
-
+type S3 interface {
 	StoreFile(ctx context.Context, owner string, data []byte, isPassword map[string]string) (models.Paste, error)
 	GetFile(ctx context.Context, objectID string) (string, error)
 	GetFiles(ctx context.Context, objectIDs []string) ([]string, error)
@@ -16,6 +14,4 @@ type FileRepository interface {
 
 	PaginateFiles(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error)
 	PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error)
-
-	Close()
 }

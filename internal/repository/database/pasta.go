@@ -1,25 +1,26 @@
-package postgres
+package database
 
 import (
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"pastebin/internal/domain"
 	"pastebin/internal/models"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
 
-type minioPostgres struct {
+type pastaDatabase struct {
 	db *sqlx.DB
 }
 
-func NewMinioPostgres(db *sqlx.DB) *minioPostgres {
-	return &minioPostgres{db: db}
+func NewPastaDatabase(db *sqlx.DB) domain.PastaDatabase {
+	return &pastaDatabase{db: db}
 }
 
-func (m *minioPostgres) CreateMetadata(ctx context.Context, pasta *models.Paste) error {
+func (m *pastaDatabase) CreateMetadata(ctx context.Context, pasta *models.Paste) error {
 	_, err := m.db.ExecContext(ctx, fmt.Sprintf(
 		"INSERT INTO %s (hash, key, user_id, size, language, visibility, password_hash, created_at, expires_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)", pastasTables),
 		pasta.Hash, pasta.Key, pasta.UserID, pasta.Size, pasta.Language, pasta.Visibility, pasta.PasswordHash, pasta.CreatedAt, pasta.ExpiresAt)
@@ -29,7 +30,7 @@ func (m *minioPostgres) CreateMetadata(ctx context.Context, pasta *models.Paste)
 	return nil
 }
 
-func (m *minioPostgres) GetKey(ctx context.Context, hash string) (string, error) {
+func (m *pastaDatabase) GetKey(ctx context.Context, hash string) (string, error) {
 	var key string
 	if err := m.db.GetContext(ctx, &key, fmt.Sprintf("SELECT key FROM %s WHERE hash = $1", pastasTables), hash); err != nil {
 		return "", fmt.Errorf("error: %v", err)
@@ -37,7 +38,7 @@ func (m *minioPostgres) GetKey(ctx context.Context, hash string) (string, error)
 	return key, nil
 }
 
-func (m *minioPostgres) GetVisibility(ctx context.Context, hash string) (string, error) {
+func (m *pastaDatabase) GetVisibility(ctx context.Context, hash string) (string, error) {
 	var visibility string
 
 	err := m.db.GetContext(ctx, &visibility, fmt.Sprintf("SELECT visibility FROM %s WHERE hash = $1", pastasTables), hash)
@@ -47,7 +48,7 @@ func (m *minioPostgres) GetVisibility(ctx context.Context, hash string) (string,
 	return visibility, nil
 }
 
-func (m *minioPostgres) GetMetadata(ctx context.Context, pasta *models.Paste) error {
+func (m *pastaDatabase) GetMetadata(ctx context.Context, pasta *models.Paste) error {
 	err := m.db.GetContext(ctx, pasta, fmt.Sprintf(
 		`	SELECT hash, key, user_id, size, language, visibility, views, created_at, expires_at 
 			FROM %s WHERE key = $1`, pastasTables), pasta.Key)
@@ -57,7 +58,7 @@ func (m *minioPostgres) GetMetadata(ctx context.Context, pasta *models.Paste) er
 	return nil
 }
 
-func (m *minioPostgres) GetPassword(ctx context.Context, hash string) (string, error) {
+func (m *pastaDatabase) GetPassword(ctx context.Context, hash string) (string, error) {
 	var hashPassword string
 
 	err := m.db.GetContext(ctx, &hashPassword, fmt.Sprintf("SELECT password_hash FROM %s WHERE hash = $1", pastasTables), hash)
@@ -70,7 +71,7 @@ func (m *minioPostgres) GetPassword(ctx context.Context, hash string) (string, e
 	return hashPassword, nil
 }
 
-func (m *minioPostgres) AddViews(ctx context.Context, hash string) error {
+func (m *pastaDatabase) AddViews(ctx context.Context, hash string) error {
 	_, err := m.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET views = views+1 WHERE hash = $1", pastasTables), hash)
 	if err != nil {
 		return err
@@ -78,7 +79,7 @@ func (m *minioPostgres) AddViews(ctx context.Context, hash string) error {
 	return nil
 }
 
-func (m *minioPostgres) CheckPermission(ctx context.Context, userID int, hash string) (bool, error) {
+func (m *pastaDatabase) CheckPermission(ctx context.Context, userID int, hash string) (bool, error) {
 	var password_hash string
 
 	err := m.db.GetContext(ctx, &password_hash, fmt.Sprintf("SELECT password_hash FROM %s WHERE user_id = $1 AND hash = $2", pastasTables), userID, hash)
@@ -91,7 +92,7 @@ func (m *minioPostgres) CheckPermission(ctx context.Context, userID int, hash st
 	return password_hash != "", nil
 }
 
-func (m *minioPostgres) GetKeys(ctx context.Context, userID int) ([]string, error) {
+func (m *pastaDatabase) GetKeys(ctx context.Context, userID int) ([]string, error) {
 	var keys []string
 	err := m.db.GetContext(ctx, &keys, fmt.Sprintf("SELECT key FROM %s WHERE user_id = $1", pastasTables), userID)
 	if err != nil {
@@ -103,7 +104,7 @@ func (m *minioPostgres) GetKeys(ctx context.Context, userID int) ([]string, erro
 	return keys, nil
 }
 
-func (m *minioPostgres) DeleteMetadata(ctx context.Context, hash string) (string, error) {
+func (m *pastaDatabase) DeleteMetadata(ctx context.Context, hash string) (string, error) {
 	var key string
 	err := m.db.GetContext(ctx, &key, fmt.Sprintf("DELETE FROM %s WHERE hash = $1 RETURNING key", pastasTables), hash)
 	if err != nil {
@@ -115,7 +116,7 @@ func (m *minioPostgres) DeleteMetadata(ctx context.Context, hash string) (string
 	return key, nil
 }
 
-func (m *minioPostgres) GetKeysExpiredPasta(ctx context.Context) ([]string, error) {
+func (m *pastaDatabase) GetKeysExpiredPasta(ctx context.Context) ([]string, error) {
 	var keys []string
 	err := m.db.SelectContext(ctx, &keys, fmt.Sprintf("SELECT key FROM %s WHERE expires_at < NOW()", pastasTables))
 	if err != nil {
@@ -127,7 +128,7 @@ func (m *minioPostgres) GetKeysExpiredPasta(ctx context.Context) ([]string, erro
 	return keys, nil
 }
 
-func (m *minioPostgres) DeleteExpiredPasta(ctx context.Context, keys []string) error {
+func (m *pastaDatabase) DeleteExpiredPasta(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}

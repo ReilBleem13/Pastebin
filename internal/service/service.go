@@ -4,7 +4,6 @@ import (
 	"context"
 	"pastebin/internal/domain/repository"
 	"pastebin/internal/models"
-	"pastebin/internal/repository/postgres"
 	"pastebin/pkg/dto"
 )
 
@@ -45,10 +44,10 @@ type Service struct {
 	Cleanup
 }
 
-func NewService(repo postgres.Repository, minio repository.FileRepository, redis repository.RedisRepository) *Service {
+func NewService(repo postgres.Repository, minio repository.FileRepository, redis repository.RedisRepository, elastic repository.ElasticRepository) *Service {
 	return &Service{
 		Authorization: NewAuthService(repo.Auth),
-		Minio:         NewMinioService(minio, redis, repo.Minio),
+		Minio:         NewMinioService(minio, redis, repo.Minio, elastic),
 		DBMinio:       NewDBMinioService(repo.Minio, redis),
 		Cleanup:       NewExpiredDeleteService(repo.Minio, minio),
 	}

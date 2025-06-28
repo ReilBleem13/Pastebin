@@ -1,11 +1,13 @@
-package minio
+package s3
 
 import (
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"pastebin/internal/domain"
 	"pastebin/internal/models"
+	"pastebin/pkg/workerpool"
 	"sort"
 	"sync"
 	"time"
@@ -14,13 +16,27 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-func (m *minioClient) StoreFile(ctx context.Context, owner string, data []byte, isPassword map[string]string) (models.Paste, error) {
+type S3 struct {
+	client *minio.Client
+	pool   *workerpool.WorkerPool
+	bucket string
+}
+
+func NewS3(client *minio.Client, pool *workerpool.WorkerPool, bucket string) domain.S3 {
+	return &S3{
+		client: client,
+		pool:   pool,
+		bucket: bucket,
+	}
+}
+
+func (m *S3) StoreFile(ctx context.Context, owner string, data []byte, isPassword map[string]string) (models.Paste, error) {
 	objectID := owner + uuid.New().String() + ".txt"
 	content := bytes.NewReader(data)
 
-	_, err := m.mc.PutObject(
+	_, err := m.client.PutObject(
 		ctx,
-		m.cfg.BucketName,
+		m.bucket,
 		objectID,
 		content,
 		int64(len(data)),
@@ -42,12 +58,12 @@ func (m *minioClient) StoreFile(ctx context.Context, owner string, data []byte, 
 	return paste, nil
 }
 
-func (m *minioClient) GetFile(ctx context.Context, key string) (string, error) {
+func (m *S3) GetFile(ctx context.Context, key string) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 
-	file, err := m.mc.GetObject(ctx, m.cfg.BucketName, key, minio.GetObjectOptions{})
+	file, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("error while getting URL for object %s: %v", key, err)
 	}
@@ -60,7 +76,7 @@ func (m *minioClient) GetFile(ctx context.Context, key string) (string, error) {
 	return string(data), nil
 }
 
-func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, error) {
+func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -130,13 +146,13 @@ func (m *minioClient) GetFiles(ctx context.Context, keys []string) ([]string, er
 	return datas, nil
 }
 
-func (m *minioClient) DeleteFile(ctx context.Context, key string) error {
+func (m *S3) DeleteFile(ctx context.Context, key string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
-	err := m.mc.RemoveObject(ctx,
-		m.cfg.BucketName,
+	err := m.client.RemoveObject(ctx,
+		m.bucket,
 		key,
 		minio.RemoveObjectOptions{},
 	)
@@ -146,7 +162,7 @@ func (m *minioClient) DeleteFile(ctx context.Context, key string) error {
 	return nil
 }
 
-func (m *minioClient) DeleteFiles(ctx context.Context, keys []string) error {
+func (m *S3) DeleteFiles(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -210,7 +226,7 @@ type Paste struct {
 	LastModified string
 }
 
-func (m *minioClient) PaginateFiles(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error) {
+func (m *S3) PaginateFiles(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error) {
 	if ctx.Err() != nil {
 		return []string{}, "", ctx.Err()
 	}
@@ -223,7 +239,7 @@ func (m *minioClient) PaginateFiles(ctx context.Context, maxKeys int, startAfter
 	}
 
 	keys := []string{}
-	objectCh := m.mc.ListObjects(ctx, m.cfg.BucketName, opts)
+	objectCh := m.client.ListObjects(ctx, m.bucket, opts)
 
 	for i := 0; i < maxKeys; i++ {
 		object, ok := <-objectCh
@@ -234,7 +250,7 @@ func (m *minioClient) PaginateFiles(ctx context.Context, maxKeys int, startAfter
 			return []string{}, "", fmt.Errorf("failed to list objects: %v", object.Err)
 		}
 
-		objInfo, err := m.mc.StatObject(ctx, m.cfg.BucketName, object.Key, minio.StatObjectOptions{})
+		objInfo, err := m.client.StatObject(ctx, m.bucket, object.Key, minio.StatObjectOptions{})
 		if err != nil {
 			return []string{}, "", err
 		}
@@ -265,7 +281,7 @@ type keyInfo struct {
 	time time.Time
 }
 
-func (m *minioClient) PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error) {
+func (m *S3) PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -309,7 +325,7 @@ func (m *minioClient) PaginateFilesByUserID(ctx context.Context, maxKeys int, st
 			return
 		}
 
-		objectCh := m.mc.ListObjects(ctx, m.cfg.BucketName, optsPublic)
+		objectCh := m.client.ListObjects(ctx, m.bucket, optsPublic)
 		for object := range objectCh {
 			if object.Err != nil {
 				handleError(object.Err)
@@ -335,7 +351,7 @@ func (m *minioClient) PaginateFilesByUserID(ctx context.Context, maxKeys int, st
 			return
 		}
 
-		objectCh := m.mc.ListObjects(ctx, m.cfg.BucketName, optsPrivate)
+		objectCh := m.client.ListObjects(ctx, m.bucket, optsPrivate)
 		for object := range objectCh {
 			if object.Err != nil {
 				handleError(object.Err)

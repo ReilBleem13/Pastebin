@@ -1,11 +1,23 @@
-package repository
+package domain
 
 import (
 	"context"
 	"pastebin/internal/models"
+	"pastebin/pkg/dto"
 )
 
-type MinioRepository interface {
+type Database interface {
+	Auth() AuthDatabase
+	Pasta() PastaDatabase
+}
+
+type AuthDatabase interface {
+	CreateUser(ctx context.Context, user *dto.RequestNewUser) error
+	GetHashPassword(ctx context.Context, email string) (string, error)
+	GetUserIDByEmail(ctx context.Context, email string) (int, error)
+}
+
+type PastaDatabase interface {
 	CreateMetadata(ctx context.Context, pasta *models.Paste) error
 
 	GetKey(ctx context.Context, hash string) (string, error)
