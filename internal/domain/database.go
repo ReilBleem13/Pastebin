@@ -18,11 +18,11 @@ type AuthDatabase interface {
 }
 
 type PastaDatabase interface {
-	CreateMetadata(ctx context.Context, pasta *models.Paste) error
+	CreateMetadata(ctx context.Context, pasta *models.Pasta) error
 
 	GetKey(ctx context.Context, hash string) (string, error)
 	GetVisibility(ctx context.Context, hash string) (string, error)
-	GetMetadata(ctx context.Context, pasta *models.Paste) error
+	GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error)
 	GetPassword(ctx context.Context, hash string) (string, error)
 	GetKeys(ctx context.Context, userID int) ([]string, error)
 	GetKeysExpiredPasta(ctx context.Context) ([]string, error)
@@ -31,4 +31,7 @@ type PastaDatabase interface {
 	CheckPermission(ctx context.Context, userID int, hash string) (bool, error)
 	DeleteMetadata(ctx context.Context, hash string) (string, error)
 	DeleteExpiredPasta(ctx context.Context, keys []string) error
+
+	IsPastaExists(ctx context.Context, hash string) (bool, error)
+	IsAccessPrivate(ctx context.Context, userID int, hash string) (bool, error)
 }

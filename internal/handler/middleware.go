@@ -57,14 +57,14 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 		if c.Request.Method == http.MethodPost {
 			var req dto.RequestCreatePasta
 			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(400, gin.H{"error": "invalid request" + err.Error()})
+				c.JSON(400, gin.H{"error": "invalid request"})
 				c.Abort()
 				return
 			}
 
 			c.Set(requestCtx, req)
 
-			if req.Visibility != nil && *req.Visibility == "private" {
+			if req.Visibility != "" && req.Visibility == "private" {
 				userID, exists := c.Get(userCtx)
 				if !exists || userID == nil {
 					c.JSON(401, gin.H{"error": "unathorized: private pastas require login"})
@@ -79,10 +79,11 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 }
 
 func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
+	// временая логика бд
 	return func(c *gin.Context) {
 		hash := c.Param("objectID")
 		ctx := context.Background()
-		visibility, err := h.servises.DBMinio.GetVisibility(ctx, hash)
+		visibility, err := h.servises.Pasta.GetVisibility(ctx, hash)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			c.Abort()
@@ -103,10 +104,6 @@ func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
 	}
 }
 
-func ptrSrt(s string) *string {
-	return &s
-}
-
 func (h *Handler) GetUserID(c *gin.Context) (int, error) {
 	id, exists := c.Get(userCtx)
 	if !exists {
@@ -121,17 +118,17 @@ func (h *Handler) GetUserID(c *gin.Context) (int, error) {
 	return idInt, nil
 }
 
-func (h *Handler) GetRequest(c *gin.Context) (dto.RequestCreatePasta, error) {
+func (h *Handler) GetRequest(c *gin.Context) (*dto.RequestCreatePasta, error) {
 	request, exists := c.Get(requestCtx)
 	if !exists {
-		return dto.RequestCreatePasta{}, errors.New("user id not found")
+		return nil, errors.New("user id not found")
 	}
 	requestNew, ok := request.(dto.RequestCreatePasta)
 	if !ok {
-		return dto.RequestCreatePasta{}, errors.New("user id is of invalid type")
+		return nil, errors.New("user id is of invalid type")
 	}
 
-	return requestNew, nil
+	return &requestNew, nil
 }
 
 func (h *Handler) GetVisibility(c *gin.Context) (string, error) {

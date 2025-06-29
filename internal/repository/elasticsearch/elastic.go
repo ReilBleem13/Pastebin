@@ -21,9 +21,6 @@ func NewElastic(client *elasticsearch.Client) domain.Elastic {
 
 func (e *Elastic) NewIndex(text *[]byte, key, index string, tags []string) error {
 	start := time.Now()
-	if text == nil {
-		return fmt.Errorf("empty")
-	}
 
 	doc := map[string]interface{}{
 		"content": *byteToString(text),

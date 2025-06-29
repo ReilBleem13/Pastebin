@@ -24,7 +24,7 @@ type StorageConfig struct {
 	Username string `yaml:"username"`
 	Dbname   string `yaml:"dbname"`
 	Password string `yaml:"password"`
-	Sslmode  string `yaml:"disable"`
+	Sslmode  string `yaml:"sslmode"`
 }
 
 type MinioConfig struct {

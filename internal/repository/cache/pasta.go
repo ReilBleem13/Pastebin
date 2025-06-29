@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"pastebin/internal/domain"
+	customerrors "pastebin/internal/errors"
 	"pastebin/internal/models"
 	"time"
 
@@ -38,7 +39,7 @@ func (r *pastaCache) AddText(ctx context.Context, hash string, data []byte) erro
 	return nil
 }
 
-func (r *pastaCache) AddMeta(ctx context.Context, pasta *models.Paste) error {
+func (r *pastaCache) AddMeta(ctx context.Context, pasta *models.Pasta) error {
 	pastaJSON, err := json.Marshal(pasta)
 	if err != nil {
 		return err
@@ -51,36 +52,34 @@ func (r *pastaCache) AddMeta(ctx context.Context, pasta *models.Paste) error {
 	return nil
 }
 
-func (r *pastaCache) GetText(ctx context.Context, pasta *models.PasteWithData, keyData string) error {
+func (r *pastaCache) GetText(ctx context.Context, keyData string) (*string, error) {
 	resultText, err := r.redis.Get(ctx, keyData).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return fmt.Errorf("key doesn't exists: %v", err)
+			return nil, customerrors.ErrKeyDoesntExist
 		} else {
-			return err
+			return nil, err
 		}
 	}
-	pasta.Text = resultText
 	log.Println("текст из redis")
-	return nil
+	return &resultText, nil
 }
 
-func (r *pastaCache) GetMeta(ctx context.Context, pasta *models.PasteWithData, keyMeta string) error {
+func (r *pastaCache) GetMeta(ctx context.Context, keyMeta string) (*models.Pasta, error) {
 	resultMeta, err := r.redis.Get(ctx, keyMeta).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return fmt.Errorf("key doesn't exists: %v", err)
+			return nil, customerrors.ErrKeyDoesntExist
 		} else {
-			return err
+			return nil, err
 		}
 	}
 
-	var metadata models.Paste
+	metadata := models.Pasta{}
 	if err := json.Unmarshal([]byte(resultMeta), &metadata); err != nil {
-		return err
+		return nil, err
 	}
-	pasta.Metadata = metadata
 	log.Println("метаданые из redis")
 
-	return nil
+	return &metadata, nil
 }

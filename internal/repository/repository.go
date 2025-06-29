@@ -1,4 +1,4 @@
-package repostitory
+package repository
 
 import (
 	"pastebin/internal/domain"

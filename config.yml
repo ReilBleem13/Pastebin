@@ -14,7 +14,7 @@ minio:
   host: localhost:9000
   bucket: chukki
   rootuser: root
-  password: qwerty
+  password: minio_password
   ssl: false
 
 redis:

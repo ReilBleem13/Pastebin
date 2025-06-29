@@ -17,7 +17,6 @@ import (
 	"syscall"
 
 	_ "github.com/lib/pq"
-	"github.com/spf13/viper"
 )
 
 func main() {
@@ -57,12 +56,12 @@ func main() {
 	repo := repostitory.NewRepository(postgres.Client(), redis.Client(),
 		minio.Client(), elastic.Client(), minio.Pool(), cfg.Minio.Bucket)
 
-	services := service.NewService(*repo, minio, redis, elastic)
-	handlers := handler.NewHandler(*services)
+	services := service.NewService(repo)
+	handlers := handler.NewHandler(services)
 
 	srv := new(handler.Server)
 	go func() {
-		if err := srv.Run(viper.GetString("port"), handlers.InitRoutes()); err != nil {
+		if err := srv.Run(cfg.Listen.Port, handlers.InitRoutes()); err != nil {
 			log.Fatalf("error occured while running http server; %s", err.Error())
 		}
 	}()

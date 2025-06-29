@@ -3,19 +3,20 @@ package service
 import (
 	"context"
 	"fmt"
-	"pastebin/internal/domain/repository"
+	"pastebin/internal/domain"
+	"pastebin/internal/repository"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
 	"strings"
 )
 
 type AuthService struct {
-	repo repository.AuthRepository
+	db domain.AuthDatabase
 }
 
-func NewAuthService(repo repository.AuthRepository) *AuthService {
+func NewAuthService(repo *repository.Repository) *AuthService {
 	return &AuthService{
-		repo: repo,
+		db: repo.Database.Auth(),
 	}
 }
 
@@ -26,11 +27,11 @@ func (a *AuthService) CreateNewUser(ctx context.Context, user *dto.RequestNewUse
 	if len(user.Password) < 10 {
 		return fmt.Errorf("password is short. min: lenght = 10")
 	}
-	return a.repo.CreateUser(ctx, user)
+	return a.db.CreateUser(ctx, user)
 }
 
 func (a *AuthService) CheckLogin(ctx context.Context, request *dto.LoginUser) error {
-	hashPassword, err := a.repo.GetHashPassword(ctx, request.Email)
+	hashPassword, err := a.db.GetHashPassword(ctx, request.Email)
 	if err != nil {
 		return err
 	}
@@ -43,7 +44,7 @@ func (a *AuthService) CheckLogin(ctx context.Context, request *dto.LoginUser) er
 }
 
 func (a *AuthService) GenerateToken(ctx context.Context, request *dto.LoginUser) (string, error) {
-	id, err := a.repo.GetUserIDByEmail(ctx, request.Email)
+	id, err := a.db.GetUserIDByEmail(ctx, request.Email)
 	if err != nil {
 		return "", err
 	}

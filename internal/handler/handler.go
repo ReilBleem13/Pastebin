@@ -7,10 +7,10 @@ import (
 )
 
 type Handler struct {
-	servises service.Service
+	servises *service.Service
 }
 
-func NewHandler(servises service.Service) *Handler {
+func NewHandler(servises *service.Service) *Handler {
 	return &Handler{
 		servises: servises,
 	}
@@ -25,10 +25,10 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		auth.POST("/create", h.AccessPostMiddleware(), h.CreatePastaHandler) // обработк ошибки при пустом json
 
 		auth.GET("/receive/:objectID", h.AccessByKeyMiddleware(), h.GetPastaHandler)
-		auth.GET("/out", h.PaginatePublicHandler)
-		auth.GET("/out/me", h.RequireAuth(), h.PaginateUserIdHandler)
+		// auth.GET("/out", h.PaginatePublicHandler)
+		// auth.GET("/out/me", h.RequireAuth(), h.PaginateUserIdHandler)
 
-		auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
+		// auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
 	}
 
 	start := router.Group("/auth")
