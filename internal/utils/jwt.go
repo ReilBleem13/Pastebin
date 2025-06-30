@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	customerrors "pastebin/internal/errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -38,17 +40,24 @@ func GenerateToken(userID int) (string, error) {
 func VerifyAccessToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			return nil, customerrors.ErrUnexpectedSignMethod
 		}
 		return []byte(os.Getenv("JWT_KEY")), nil
 	})
 
 	if err != nil {
-		return nil, err
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, customerrors.ErrTokenExpired
+		}
+
+		if errors.Is(err, jwt.ErrTokenSignatureInvalid) {
+			return nil, customerrors.ErrInvalidToken
+		}
+		return nil, fmt.Errorf("could not parse token: %w", err)
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
 		return claims, nil
 	}
-	return nil, fmt.Errorf("invalid token")
+	return nil, customerrors.ErrInvalidToken
 }

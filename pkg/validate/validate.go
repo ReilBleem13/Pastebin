@@ -32,6 +32,10 @@ func CheckContains(supported []string, elem string) bool {
 }
 
 func ValidRequestCreatePasta(request *dto.RequestCreatePasta) (time.Time, error) {
+	if request.Message == "" {
+		return time.Time{}, customerrors.ErrTextIsEmpty
+	}
+
 	if request.Language != "" {
 		if !CheckContains(SupportedLanguages, request.Language) {
 			return time.Time{}, customerrors.ErrInvalidLanguageFormat

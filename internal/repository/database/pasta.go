@@ -5,8 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
-	"pastebin/internal/domain"
+	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
 	"pastebin/internal/models"
 
@@ -22,10 +21,10 @@ func NewPastaDatabase(db *sqlx.DB) domain.PastaDatabase {
 	return &pastaDatabase{db: db}
 }
 
-func (m *pastaDatabase) CreateMetadata(ctx context.Context, pasta *models.Pasta) error {
+func (m *pastaDatabase) Create(ctx context.Context, pasta *models.Pasta) error {
 	_, err := m.db.ExecContext(ctx, fmt.Sprintf(
-		"INSERT INTO %s (hash, key, user_id, size, language, visibility, password_hash, created_at, expires_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)", pastasTables),
-		pasta.Hash, pasta.Key, pasta.UserID, pasta.Size, pasta.Language, pasta.Visibility, pasta.PasswordHash, pasta.CreatedAt, pasta.ExpiresAt)
+		"INSERT INTO %s (hash, object_id, user_id, size, language, visibility, password_hash, created_at, expires_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)", pastasTables),
+		pasta.Hash, pasta.ObjectID, pasta.UserID, pasta.Size, pasta.Language, pasta.Visibility, pasta.PasswordHash, pasta.CreatedAt, pasta.ExpiresAt)
 	if err != nil {
 		return err
 	}
@@ -33,11 +32,11 @@ func (m *pastaDatabase) CreateMetadata(ctx context.Context, pasta *models.Pasta)
 }
 
 func (m *pastaDatabase) GetKey(ctx context.Context, hash string) (string, error) {
-	var key string
-	if err := m.db.GetContext(ctx, &key, fmt.Sprintf("SELECT key FROM %s WHERE hash = $1", pastasTables), hash); err != nil {
+	var object_id string
+	if err := m.db.GetContext(ctx, &object_id, fmt.Sprintf("SELECT object_id FROM %s WHERE hash = $1", pastasTables), hash); err != nil {
 		return "", fmt.Errorf("error: %v", err)
 	}
-	return key, nil
+	return object_id, nil
 }
 
 func (m *pastaDatabase) GetVisibility(ctx context.Context, hash string) (string, error) {
@@ -45,6 +44,9 @@ func (m *pastaDatabase) GetVisibility(ctx context.Context, hash string) (string,
 
 	err := m.db.GetContext(ctx, &visibility, fmt.Sprintf("SELECT visibility FROM %s WHERE hash = $1", pastasTables), hash)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", customerrors.ErrPastaNotFound
+		}
 		return "", err
 	}
 	return visibility, nil
@@ -52,12 +54,11 @@ func (m *pastaDatabase) GetVisibility(ctx context.Context, hash string) (string,
 
 func (m *pastaDatabase) GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error) {
 	pasta := &models.Pasta{}
-	log.Println(objectID)
+
 	err := m.db.GetContext(ctx, pasta, fmt.Sprintf(
-		`	SELECT hash, key, user_id, size, language, visibility, views, created_at, expires_at 
+		`	SELECT hash, object_id, user_id, size, language, visibility, views, created_at, expires_at 
 			FROM %s WHERE key = $1`, pastasTables), objectID)
 	if err != nil {
-		log.Println(err)
 		return nil, err
 	}
 	return pasta, nil
@@ -98,23 +99,23 @@ func (m *pastaDatabase) CheckPermission(ctx context.Context, userID int, hash st
 }
 
 func (m *pastaDatabase) GetKeys(ctx context.Context, userID int) ([]string, error) {
-	var keys []string
-	err := m.db.GetContext(ctx, &keys, fmt.Sprintf("SELECT key FROM %s WHERE user_id = $1", pastasTables), userID)
+	var objectIDs []string
+	err := m.db.GetContext(ctx, &objectIDs, fmt.Sprintf("SELECT object_id FROM %s WHERE user_id = $1", pastasTables), userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return []string{}, errors.New("pastas is empty")
+			return []string{}, customerrors.ErrPastaNotFound
 		}
 		return []string{}, err
 	}
-	return keys, nil
+	return objectIDs, nil
 }
 
 func (m *pastaDatabase) DeleteMetadata(ctx context.Context, hash string) (string, error) {
 	var key string
-	err := m.db.GetContext(ctx, &key, fmt.Sprintf("DELETE FROM %s WHERE hash = $1 RETURNING key", pastasTables), hash)
+	err := m.db.GetContext(ctx, &key, fmt.Sprintf("DELETE FROM %s WHERE hash = $1 RETURNING object_id", pastasTables), hash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("metadata not found for hash: %s", hash)
+			return "", customerrors.ErrPastaNotFound
 		}
 		return "", err
 	}
@@ -148,12 +149,21 @@ func (m *pastaDatabase) DeleteExpiredPasta(ctx context.Context, keys []string) e
 }
 
 // new methods
-
 func (m *pastaDatabase) IsPastaExists(ctx context.Context, hash string) (bool, error) {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE hash = $1)", pastasTables)
 
 	var exists bool
-	if err := m.db.Get(&exists, query, hash); err != nil {
+	if err := m.db.GetContext(ctx, &exists, query, hash); err != nil {
+		return exists, err
+	}
+	return exists, nil
+}
+
+func (m *pastaDatabase) IsPastaExistsByObjectID(ctx context.Context, objectID string) (bool, error) {
+	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE object_id = $1)", pastasTables)
+
+	var exists bool
+	if err := m.db.GetContext(ctx, &exists, query, objectID); err != nil {
 		return exists, err
 	}
 	return exists, nil
@@ -163,7 +173,7 @@ func (m *pastaDatabase) IsAccessPrivate(ctx context.Context, userID int, hash st
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE user_id = $1 AND hash = $2)", pastasTables)
 
 	var exists bool
-	if err := m.db.Get(&exists, query, userID, hash); err != nil {
+	if err := m.db.GetContext(ctx, &exists, query, userID, hash); err != nil {
 		return exists, err
 	}
 	return exists, nil

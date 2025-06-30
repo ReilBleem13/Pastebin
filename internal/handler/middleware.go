@@ -1,10 +1,9 @@
 package handler
 
 import (
-	"context"
 	"errors"
-	"log"
 	"net/http"
+	customerrors "pastebin/internal/errors"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
 	"strings"
@@ -14,24 +13,41 @@ import (
 
 const (
 	authorizationHeader = "Authorization"
-	userCtx             = "userId"
-	requestCtx          = "request"
-	visibilityCtx       = "visibility"
+	visibilityPrivate   = "private"
+	tokenPrefix         = "Bearer "
+
+	userCtx       = "userId"
+	requestCtx    = "request"
+	visibilityCtx = "visibility"
 )
 
 func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader(authorizationHeader)
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
+		if header == "" || !strings.HasPrefix(header, tokenPrefix) {
 			c.Next()
 			return
 		}
 
-		token := strings.TrimPrefix(header, "Bearer ")
+		token := strings.TrimPrefix(header, tokenPrefix)
 		claims, err := utils.VerifyAccessToken(token)
 		if err != nil {
-			log.Printf("AuthMiddleWare. Error: %v", err)
-			c.Next()
+			if errors.Is(err, customerrors.ErrTokenExpired) {
+				c.JSON(401, gin.H{"error": "token has expired"})
+				c.Abort()
+				return
+			}
+
+			if errors.Is(err, customerrors.ErrInvalidToken) ||
+				errors.Is(err, customerrors.ErrUnexpectedSignMethod) {
+				c.JSON(401, gin.H{"error": "invalid token"})
+				c.Abort()
+				return
+			}
+
+			h.logger.Errorf("unexpected error during token verification: %v", err)
+			c.JSON(500, customerrors.ErrInternal)
+			c.Abort()
 			return
 		}
 
@@ -42,8 +58,8 @@ func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 
 func (h *Handler) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, exists := c.Get(userCtx)
-		if !exists || userID == nil {
+		_, exists := c.Get(userCtx)
+		if !exists {
 			c.JSON(401, gin.H{"error": "unauthorized"})
 			c.Abort()
 			return
@@ -61,13 +77,12 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 				c.Abort()
 				return
 			}
-
 			c.Set(requestCtx, req)
 
-			if req.Visibility != "" && req.Visibility == "private" {
-				userID, exists := c.Get(userCtx)
-				if !exists || userID == nil {
-					c.JSON(401, gin.H{"error": "unathorized: private pastas require login"})
+			if req.Visibility == visibilityPrivate {
+				_, exists := c.Get(userCtx)
+				if !exists {
+					c.JSON(401, gin.H{"error": "unathorized: create private pastas require login"})
 					c.Abort()
 					return
 				}
@@ -82,19 +97,24 @@ func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
 	// временая логика бд
 	return func(c *gin.Context) {
 		hash := c.Param("objectID")
-		ctx := context.Background()
+		ctx := c.Request.Context()
+
 		visibility, err := h.servises.Pasta.GetVisibility(ctx, hash)
 		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			if errors.Is(err, customerrors.ErrPastaNotFound) {
+				c.JSON(404, gin.H{"error": err.Error()})
+			} else {
+				h.logger.Errorf("Internal error on GetVisibility: %v", err)
+				c.JSON(500, gin.H{"error": err.Error()})
+			}
 			c.Abort()
 			return
 		}
-
 		c.Set(visibilityCtx, visibility)
 
-		if visibility == "private" {
-			userID, exists := c.Get(userCtx)
-			if !exists || userID == nil {
+		if visibility == visibilityPrivate {
+			_, exists := c.Get(userCtx)
+			if !exists {
 				c.JSON(401, gin.H{"error": "unauthorized: private pasta"})
 				c.Abort()
 				return
@@ -104,42 +124,49 @@ func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
 	}
 }
 
+// получение userID c context
 func (h *Handler) GetUserID(c *gin.Context) (int, error) {
-	id, exists := c.Get(userCtx)
+	rawUserID, exists := c.Get(userCtx)
 	if !exists {
-		return 0, nil
-	}
+		return 0, customerrors.ErrUserNotAuthenticated
+	} //подумать
 
-	idInt, ok := id.(int)
+	userID, ok := rawUserID.(int)
 	if !ok {
-		return 0, errors.New("user id is of invalid type")
+		h.logger.Errorf("invalid type for userCtx: %T", userID)
+		return 0, customerrors.ErrInternal
 	}
-
-	return idInt, nil
+	return userID, nil
 }
 
+// получение request с context
 func (h *Handler) GetRequest(c *gin.Context) (*dto.RequestCreatePasta, error) {
-	request, exists := c.Get(requestCtx)
+	rawRequest, exists := c.Get(requestCtx)
 	if !exists {
-		return nil, errors.New("user id not found")
-	}
-	requestNew, ok := request.(dto.RequestCreatePasta)
-	if !ok {
-		return nil, errors.New("user id is of invalid type")
+		h.logger.Error("critical: requestCtx not found in context")
+		return nil, customerrors.ErrInternal
 	}
 
-	return &requestNew, nil
+	request, ok := rawRequest.(dto.RequestCreatePasta)
+	if !ok {
+		h.logger.Errorf("invalid type for requestCtx: %T", request)
+		return nil, customerrors.ErrInternal
+	}
+	return &request, nil
 }
 
+// получение visibility c context
 func (h *Handler) GetVisibility(c *gin.Context) (string, error) {
-	visib, exists := c.Get(visibilityCtx)
+	rawVisibility, exists := c.Get(visibilityCtx)
 	if !exists {
-		return "", errors.New("visibility not found")
-	}
-	visibNew, ok := visib.(string)
-	if !ok {
-		return "", errors.New("visibility is of invalid type")
+		h.logger.Error("critical: visibilityCtx not found in context")
+		return "", customerrors.ErrInternal
 	}
 
-	return visibNew, nil
+	visibility, ok := rawVisibility.(string)
+	if !ok {
+		h.logger.Errorf("invalid type for requestCtx: %T", visibility)
+		return "", customerrors.ErrInternal
+	}
+	return visibility, nil
 }

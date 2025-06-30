@@ -4,31 +4,41 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"pastebin/internal/domain"
+	domainrepo "pastebin/internal/domain/repository"
+	domainservice "pastebin/internal/domain/service"
 	customerrors "pastebin/internal/errors"
 	"pastebin/internal/models"
 	"pastebin/internal/repository"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
 	hashing "pastebin/pkg/hash"
+	"pastebin/pkg/logging"
 	"pastebin/pkg/validate"
+	"strconv"
+	"sync"
 )
 
 type PastaService struct {
-	s3      domain.S3
-	cache   domain.PastaCache
-	db      domain.PastaDatabase
-	elastic domain.Elastic
+	s3      domainrepo.S3
+	cache   domainrepo.PastaCache
+	db      domainrepo.PastaDatabase
+	elastic domainrepo.Elastic
+	logger  *logging.Logger
 }
 
 const (
-	defaultNewFilePrefix        = "public:"
+	defaultNewFilePrefix string = "public:"
 	indexForElastic      string = "pastas" // добавить в структуру конфиг
-	visibilityIsPrivate         = "private"
+	visibilityIsPrivate  string = "private"
+
+	textPrefix string = "text"
+	metaPrefix string = "meta"
+	userPrefix string = "user"
+
+	defaultMaxObject int = 5
 )
 
-func NewPastaService(repo *repository.Repository) *PastaService {
+func NewPastaService(repo *repository.Repository, logger *logging.Logger) domainservice.Pasta {
 	return &PastaService{
 		s3:      repo.S3,
 		cache:   repo.Cache.Pasta(),
@@ -65,16 +75,16 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 		var err error
 		passwordHash, err = utils.HashPassword(req.Password)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to hash password: %w", err)
 		}
 	}
 
 	data := []byte(req.Message)
-	pastaMetadata, err := m.s3.StoreFile(ctx, prefix, &data, options)
+	pastaMetadata, err := m.s3.Store(ctx, prefix, data, options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to store pasta in S3: %w", err)
 	}
-	pastaMetadata.Hash = hashing.Hash(pastaMetadata.Key)
+	pastaMetadata.Hash = hashing.Hash(pastaMetadata.ObjectID)
 	pastaMetadata.ExpiresAt = timeExpiration
 	pastaMetadata.PasswordHash = passwordHash
 	pastaMetadata.Language = req.Language
@@ -82,18 +92,38 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 	pastaMetadata.UserID = userID
 
 	// добавление метаданных в бд
-	if err := m.db.CreateMetadata(ctx, pastaMetadata); err != nil {
-		return nil, err
+	if err := m.db.Create(ctx, pastaMetadata); err != nil {
+		// добавить удаление с minio + логировать если ошибка
+		return nil, fmt.Errorf("failed to create new pasta in database: %w", err)
 	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, 2)
 
 	// кеширование текста
-	if err := m.cache.AddText(ctx, pastaMetadata.Hash, data); err != nil {
-		return nil, err
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := m.cache.AddText(ctx, pastaMetadata.Hash, data); err != nil {
+			errChan <- fmt.Errorf("failed to cache pasta after creation: %w", err)
+		}
+	}()
 
 	// индексирование текста
-	if err := m.elastic.NewIndex(&data, pastaMetadata.Key, indexForElastic, nil); err != nil {
-		return nil, err
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := m.elastic.NewIndex(data, pastaMetadata.ObjectID, indexForElastic, nil); err != nil {
+			errChan <- fmt.Errorf("failed to index pasta after creation: %w", err)
+		}
+	}()
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			m.logger.Errorf("error in background pasta creation task: %v", err)
+		}
 	}
 	return pastaMetadata, nil
 }
@@ -102,9 +132,8 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 	// проверяем существования пасты
 	pastaExists, err := m.db.IsPastaExists(ctx, hash)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check is pasta exists: %w", err)
 	}
-
 	if !pastaExists {
 		return customerrors.ErrPastaNotFound
 	}
@@ -113,7 +142,7 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 	if visibility == visibilityIsPrivate {
 		exists, err := m.db.IsAccessPrivate(ctx, userID, hash)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to check is accecc private: %w", err)
 		}
 		if !exists {
 			return customerrors.ErrNoAccess
@@ -123,15 +152,12 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 
 	// проверка, если паста публичная
 	passwordHash, err := m.db.GetPassword(ctx, hash)
-	log.Printf("password: %s", passwordHash)
-	log.Printf("password me: %s", password)
-
-	if err != nil {
-		return err
+	if err != nil && !errors.Is(err, customerrors.ErrPasswordIsEmpty) {
+		return fmt.Errorf("failed to get password: %w", err)
 	}
+
 	if passwordHash != "" {
 		if !utils.CheckPasswordHash(password, passwordHash) {
-			log.Println(utils.CheckPasswordHash(password, passwordHash))
 			return customerrors.ErrWrongPassword
 		}
 		return nil
@@ -141,22 +167,23 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 
 func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
 	text, err := m.cache.GetText(ctx, keyText)
-	if err != nil {
-		if errors.Is(err, customerrors.ErrKeyDoesntExist) {
-			text, err = m.s3.GetFile(ctx, objectID)
-			if err != nil {
-				return nil, err
-			}
-			log.Println("текст из MINIO")
-
-			if err := m.cache.AddText(ctx, hash, []byte(*text)); err != nil {
-				return nil, err
-			}
-			log.Println("текст добавлен в Redis")
-		} else {
-			return nil, err
-		}
+	if err == nil {
+		return text, nil
 	}
+	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
+		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
+	}
+
+	text, err = m.s3.Get(ctx, objectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file from minio: %w", err)
+	}
+	m.logger.Info("Текст из S3") // убрать
+
+	if err := m.cache.AddText(ctx, hash, []byte(*text)); err != nil {
+		m.logger.Errorf("error in add text to cache: %v", err)
+	}
+	m.logger.Info("Текст добавлен в Cache") // убрать
 	return text, nil
 }
 
@@ -165,11 +192,11 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 
 	objectID, err := m.db.GetKey(ctx, hash)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get objectID: %w", err)
 	}
 
-	keyMeta := fmt.Sprintf("meta:%s", hash)
-	keyText := fmt.Sprintf("data:%s", hash)
+	keyMeta := fmt.Sprintf("%s:%s", metaPrefix, hash)
+	keyText := fmt.Sprintf("%s:%s", textPrefix, hash)
 
 	if !flag {
 		text, err := m.GetText(ctx, keyText, objectID, hash)
@@ -179,8 +206,9 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 		// только инкримент просмотров
 		_, err = m.cache.Views(ctx, hash)
 		if err != nil {
-			return nil, err
+			m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
 		}
+
 		result.Text = *text
 		result.Metadata = nil
 		return result, nil
@@ -201,22 +229,23 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 	}()
 	go func() {
 		metadata, err := m.cache.GetMeta(ctx, keyMeta)
-		if errors.Is(err, customerrors.ErrKeyDoesntExist) {
-			metadata, err = m.db.GetMetadata(ctx, objectID)
-			if err != nil {
-				metaErrCh <- err
-				return
-			}
-			log.Println("Метаданные из DB")
+		if err == nil {
+			m.logger.Info("Метаданые получены из Cache") //убрать
+			metaCh <- metadata
+			return
+		}
+		if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
+			m.logger.Errorf("failed to get metadata from cache, falling back to DB: %v", err)
+		}
 
-			if err := m.cache.AddMeta(ctx, metadata); err != nil {
-				metaErrCh <- err
-				return
-			}
-			log.Println("Метаданные добавлены в Redis")
-		} else if err != nil {
+		metadata, err = m.db.GetMetadata(ctx, objectID)
+		if err != nil {
+			m.logger.Info("Метаданые получены из DB") //убрать
 			metaErrCh <- err
 			return
+		}
+		if err := m.cache.AddMeta(ctx, metadata); err != nil {
+			m.logger.Errorf("error in add metadata to cache: %v", err)
 		}
 		metaCh <- metadata
 	}()
@@ -237,82 +266,95 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 
 	views, err := m.cache.Views(ctx, hash)
 	if err != nil {
-		return nil, err
+		m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
+		views = -1
 	}
 	result.Metadata = metadata
 	result.Metadata.Views = views
-
 	result.Text = *text
+
 	return result, nil
+}
+
+func (m *PastaService) Delete(ctx context.Context, hash string) error {
+	key, err := m.db.DeleteMetadata(ctx, hash)
+	if err != nil {
+		if !errors.Is(err, customerrors.ErrPastaNotFound) {
+			return fmt.Errorf("failed to delete pasta from DB: %w", err)
+		}
+		return err
+	}
+	if err := m.s3.Delete(ctx, key); err != nil {
+		return fmt.Errorf("failed to delete file from S3: %w", err)
+	}
+	return nil
 }
 
 // func (m *MinioService) GetMany(ctx context.Context, objectIDs []string) ([]string, error) {
 // 	return m.client.GetFiles(ctx, objectIDs)
 // }
 
-// func (m *MinioService) DeleteOne(ctx context.Context, hash string) error {
-// 	key, err := m.repo.DeleteMetadata(ctx, hash)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	return m.client.DeleteFile(ctx, key)
-// }
-
 // func (m *MinioService) DeleteMany(ctx context.Context, objectIDs []string) error {
 // 	return m.client.DeleteFiles(ctx, objectIDs)
 // }
 
-// func (m *MinioService) Paginate(ctx context.Context, maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error) {
-// 	var prefix string
-// 	var maxKeysInt int
+func (m *PastaService) Paginate(ctx context.Context, rawLimit, startAfter string, userID *int) (*[]models.PastaPaginated, string, error) {
+	var limit int
 
-// 	if maxKeys != "" {
-// 		var err error
-// 		maxKeysInt, err = strconv.Atoi(maxKeys)
-// 		if err != nil {
-// 			return []models.PastaPaginated{}, "", fmt.Errorf("invalid maxkeys format: %v", err)
-// 		}
+	if rawLimit == "" {
+		limit = defaultMaxObject
+	} else {
+		var err error
+		limit, err = strconv.Atoi(rawLimit)
+		if err != nil {
+			return nil, "", customerrors.ErrInvalidQueryParament
+		}
+		if limit < 5 {
+			limit = defaultMaxObject
+		}
+	}
 
-// 		if maxKeysInt < 5 {
-// 			maxKeysInt = 5
-// 		}
-// 	} else {
-// 		maxKeysInt = 5
-// 	}
+	exists, err := m.db.IsPastaExistsByObjectID(ctx, startAfter)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to check is pasta exists by objectID: %w", err)
+	}
 
-// 	if userID != nil {
-// 		prefix = fmt.Sprintf("user:%d", *userID)
-// 		pastas, nextKey, err := m.client.PaginateFilesByUserID(ctx, maxKeysInt, startAfter, prefix)
-// 		if err != nil {
-// 			return []models.PastaPaginated{}, "", err
-// 		}
-// 		responses := formResponse(pastas)
-// 		return responses, nextKey, nil
-// 	} else {
-// 		prefix = "public"
-// 	}
+	if !exists {
+		return nil, "", customerrors.ErrPastaNotFound
+	}
 
-// 	pastas, nextKey, err := m.client.PaginateFiles(ctx, maxKeysInt, startAfter, prefix)
-// 	if err != nil {
-// 		return []models.PastaPaginated{}, "", err
-// 	}
+	prefix := visibilityIsPrivate
 
-// 	responses := formResponse(pastas)
-// 	return responses, nextKey, nil
-// }
+	if userID != nil {
+		prefix := fmt.Sprintf("%s:%d", userPrefix, *userID)
+		pastas, nextKey, err := m.s3.PaginateFilesByUserID(ctx, limit, startAfter, prefix)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to paginate files by userID: %w", err)
+		}
+		responses := formResponse(pastas)
+		return responses, nextKey, nil
+	}
 
-// func formResponse(pastas []string) []models.PastaPaginated {
-// 	var responses []models.PastaPaginated
+	pastas, nextKey, err := m.s3.PaginateFiles(ctx, limit, startAfter, prefix)
+	if err != nil {
+		return nil, "", err
+	}
+	responses := formResponse(pastas)
+	return responses, nextKey, nil
+}
 
-// 	for i, pasta := range pastas {
-// 		response := models.PastaPaginated{
-// 			Number: i + 1,
-// 			Pasta:  pasta,
-// 		}
-// 		responses = append(responses, response)
-// 	}
-// 	return responses
-// }
+func formResponse(pastas *[]string) *[]models.PastaPaginated {
+	responses := []models.PastaPaginated{}
+
+	for i, pasta := range *pastas {
+		response := models.PastaPaginated{
+			Number: i + 1,
+			Pasta:  pasta,
+		}
+		responses = append(responses, response)
+	}
+	return &responses
+}
 
 // func prtSrt(s string) *string {
 // 	return &s

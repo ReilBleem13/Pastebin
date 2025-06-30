@@ -19,4 +19,8 @@ type LoginUser struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type Password struct {
+	Password string `json:"password"`
+}
+
 // в api слое проверить корректность данных, а в сервисе соответствие правилам

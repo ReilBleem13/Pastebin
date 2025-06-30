@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"pastebin/internal/domain"
+	domain "pastebin/internal/domain/repository"
 	"pastebin/internal/models"
 	"pastebin/pkg/workerpool"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,137 +30,142 @@ func NewS3(client *minio.Client, pool *workerpool.WorkerPool, bucket string) dom
 	}
 }
 
-func (m *S3) StoreFile(ctx context.Context, owner string, data *[]byte, isPassword map[string]string) (*models.Pasta, error) {
+const (
+	privatePrefix = "private:"
+	publucPrefix  = "public:"
+)
+
+func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword map[string]string) (*models.Pasta, error) {
 	objectID := owner + uuid.New().String() + ".txt"
-	content := bytes.NewReader(*data)
+	content := bytes.NewReader(data)
 
 	_, err := m.client.PutObject(
 		ctx,
 		m.bucket,
 		objectID,
 		content,
-		int64(len(*data)),
+		int64(len(data)),
 		minio.PutObjectOptions{
 			UserMetadata: isPassword,
 		},
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("error while creating object: %v", err)
+		return nil, fmt.Errorf("error while creating object: %w", err)
 	}
 
 	paste := &models.Pasta{
 		CreatedAt: time.Now(),
-		Key:       objectID,
-		Size:      int(len(*data)),
+		ObjectID:  objectID,
+		Size:      int(len(data)),
 	}
 	return paste, nil
 }
 
-func (m *S3) GetFile(ctx context.Context, key string) (*string, error) {
+func (m *S3) Get(ctx context.Context, key string) (*string, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
 	file, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error while getting URL for object %s: %v", key, err)
+		return nil, fmt.Errorf("error while getting URL for object %s: %w", key, err)
 	}
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return nil, fmt.Errorf("error while reading file: %v", err)
+		return nil, fmt.Errorf("error while reading file: %w", err)
 	}
 
 	result := string(data)
 	return &result, nil
 }
 
-// func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
-// 	ctx, cancel := context.WithCancel(ctx)
-// 	defer cancel()
+func (m *S3) Delete(ctx context.Context, key string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
-// 	dataCh := make(chan string, len(keys))
-// 	errCh := make(chan error, len(keys))
+	err := m.client.RemoveObject(ctx,
+		m.bucket,
+		key,
+		minio.RemoveObjectOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("error while deleting file: %w", err)
+	}
+	return nil
+}
 
-// 	handleError := func(err error) {
-// 		select {
-// 		case errCh <- err:
-// 		default:
-// 			cancel()
-// 			return
-// 		}
-// 	}
+func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-// 	var wg sync.WaitGroup
-// 	for _, key := range keys {
-// 		wg.Add(1)
-// 		key := key
+	dataCh := make(chan *string, len(keys))
+	errCh := make(chan error, len(keys))
 
-// 		m.pool.Tasks <- func() {
-// 			defer wg.Done()
-// 			defer func() {
-// 				if r := recover(); r != nil {
-// 					handleError(fmt.Errorf("panic in GetFile: %v", r))
-// 				}
-// 			}()
+	handleError := func(err error) {
+		select {
+		case errCh <- err:
+		default:
+			cancel()
+			return
+		}
+	}
 
-// 			if ctx.Err() != nil {
-// 				return
-// 			}
+	var wg sync.WaitGroup
+	for _, key := range keys {
+		wg.Add(1)
+		key := key
 
-// 			data, err := m.GetFile(ctx, key)
-// 			if err != nil {
-// 				handleError(err)
-// 				return
-// 			}
+		m.pool.Tasks <- func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					handleError(fmt.Errorf("panic in GetFile: %v", r))
+				}
+			}()
 
-// 			select {
-// 			case dataCh <- data:
-// 			case <-ctx.Done():
-// 				return
-// 			}
-// 		}
-// 	}
+			if ctx.Err() != nil {
+				return
+			}
 
-// 	go func() {
-// 		wg.Wait()
-// 		close(dataCh)
-// 		close(errCh)
-// 	}()
+			data, err := m.Get(ctx, key)
+			if err != nil {
+				handleError(err)
+				return
+			}
 
-// 	var datas []string
-// 	var errs []error
+			select {
+			case dataCh <- data:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
 
-// 	for data := range dataCh {
-// 		datas = append(datas, data)
-// 	}
+	go func() {
+		wg.Wait()
+		close(dataCh)
+		close(errCh)
+	}()
 
-// 	for err := range errCh {
-// 		errs = append(errs, err)
-// 	}
+	var datas []string
+	var errs []error
 
-// 	if len(errs) > 0 {
-// 		return nil, fmt.Errorf("error while getting objects: %v", errs)
-// 	}
-// 	return datas, nil
-// }
+	for data := range dataCh {
+		datas = append(datas, *data)
+	}
 
-// func (m *S3) DeleteFile(ctx context.Context, key string) error {
-// 	if ctx.Err() != nil {
-// 		return ctx.Err()
-// 	}
+	for err := range errCh {
+		errs = append(errs, err)
+	}
 
-// 	err := m.client.RemoveObject(ctx,
-// 		m.bucket,
-// 		key,
-// 		minio.RemoveObjectOptions{},
-// 	)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	return nil
-// }
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("error while getting objects: %v", errs)
+	}
+	return datas, nil
+}
 
 // func (m *S3) DeleteFiles(ctx context.Context, keys []string) error {
 // 	if len(keys) == 0 {
@@ -224,187 +231,187 @@ func (m *S3) GetFile(ctx context.Context, key string) (*string, error) {
 // 	LastModified string
 // }
 
-// func (m *S3) PaginateFiles(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error) {
-// 	if ctx.Err() != nil {
-// 		return []string{}, "", ctx.Err()
-// 	}
+func (m *S3) PaginateFiles(ctx context.Context, limit int, startAfter, prefix string) (*[]string, string, error) {
+	if ctx.Err() != nil {
+		return nil, "", ctx.Err()
+	}
 
-// 	opts := minio.ListObjectsOptions{
-// 		Recursive:  true,
-// 		Prefix:     prefix,
-// 		MaxKeys:    maxKeys,
-// 		StartAfter: startAfter,
-// 	}
+	opts := minio.ListObjectsOptions{
+		Recursive:  true,
+		Prefix:     prefix,
+		MaxKeys:    limit,
+		StartAfter: startAfter,
+	}
 
-// 	keys := []string{}
-// 	objectCh := m.client.ListObjects(ctx, m.bucket, opts)
+	keys := []string{}
+	objectCh := m.client.ListObjects(ctx, m.bucket, opts)
 
-// 	for i := 0; i < maxKeys; i++ {
-// 		object, ok := <-objectCh
-// 		if !ok {
-// 			break
-// 		}
-// 		if object.Err != nil {
-// 			return []string{}, "", fmt.Errorf("failed to list objects: %v", object.Err)
-// 		}
+	for i := 0; i < limit; i++ {
+		object, ok := <-objectCh
+		if !ok {
+			break
+		}
+		if object.Err != nil {
+			return nil, "", fmt.Errorf("failed to list objects: %v", object.Err)
+		}
 
-// 		objInfo, err := m.client.StatObject(ctx, m.bucket, object.Key, minio.StatObjectOptions{})
-// 		if err != nil {
-// 			return []string{}, "", err
-// 		}
+		objInfo, err := m.client.StatObject(ctx, m.bucket, object.Key, minio.StatObjectOptions{})
+		if err != nil {
+			return nil, "", err
+		}
 
-// 		hashPassword, exists := objInfo.UserMetadata["Has_password"]
-// 		if exists && hashPassword == "true" {
-// 			continue
-// 		}
+		hashPassword, exists := objInfo.UserMetadata["Has_password"]
+		if exists && hashPassword == "true" {
+			continue
+		}
 
-// 		keys = append(keys, object.Key)
-// 	}
+		keys = append(keys, object.Key)
+	}
 
-// 	nextKey := ""
-// 	if len(keys) == maxKeys {
-// 		nextKey = keys[len(keys)-1]
-// 	}
+	nextKey := ""
+	if len(keys) == limit {
+		nextKey = keys[len(keys)-1]
+	}
 
-// 	pastas, err := m.GetFiles(ctx, keys)
-// 	if err != nil {
-// 		return []string{}, "", err
-// 	}
+	pastas, err := m.GetFiles(ctx, keys)
+	if err != nil {
+		return nil, "", err
+	}
 
-// 	return pastas, nextKey, nil
-// }
+	return &pastas, nextKey, nil
+}
 
-// type keyInfo struct {
-// 	key  string
-// 	time time.Time
-// }
+type keyInfo struct {
+	key  string
+	time time.Time
+}
 
-// func (m *S3) PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) ([]string, string, error) {
-// 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-// 	defer cancel()
+func (m *S3) PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) (*[]string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-// 	optsPublic := minio.ListObjectsOptions{
-// 		Recursive:  true,
-// 		Prefix:     "public:" + prefix,
-// 		MaxKeys:    maxKeys,
-// 		StartAfter: startAfter,
-// 	}
+	optsPublic := minio.ListObjectsOptions{
+		Recursive:  true,
+		Prefix:     publucPrefix + prefix,
+		MaxKeys:    maxKeys,
+		StartAfter: startAfter,
+	}
 
-// 	optsPrivate := minio.ListObjectsOptions{
-// 		Recursive:  true,
-// 		Prefix:     "private:" + prefix,
-// 		MaxKeys:    maxKeys,
-// 		StartAfter: startAfter,
-// 	}
+	optsPrivate := minio.ListObjectsOptions{
+		Recursive:  true,
+		Prefix:     privatePrefix + prefix,
+		MaxKeys:    maxKeys,
+		StartAfter: startAfter,
+	}
 
-// 	keyCh := make(chan keyInfo, maxKeys*2)
-// 	errCh := make(chan error, 1)
+	keyCh := make(chan keyInfo, maxKeys*2)
+	errCh := make(chan error, 1)
 
-// 	var wg sync.WaitGroup
-// 	wg.Add(2)
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-// 	handleError := func(err error) {
-// 		select {
-// 		case errCh <- err:
-// 		default:
-// 			cancel()
-// 		}
-// 	}
+	handleError := func(err error) {
+		select {
+		case errCh <- err:
+		default:
+			cancel()
+		}
+	}
 
-// 	go func() {
-// 		defer wg.Done()
-// 		defer func() {
-// 			if r := recover(); r != nil {
-// 				handleError(fmt.Errorf("panic in ListObjects: %v", r))
-// 			}
-// 		}()
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				handleError(fmt.Errorf("panic in ListObjects: %v", r))
+			}
+		}()
 
-// 		if ctx.Err() != nil {
-// 			return
-// 		}
+		if ctx.Err() != nil {
+			return
+		}
 
-// 		objectCh := m.client.ListObjects(ctx, m.bucket, optsPublic)
-// 		for object := range objectCh {
-// 			if object.Err != nil {
-// 				handleError(object.Err)
-// 				return
-// 			}
-// 			select {
-// 			case keyCh <- keyInfo{key: object.Key, time: object.LastModified}:
-// 			case <-ctx.Done():
-// 				return
-// 			}
-// 		}
-// 	}()
+		objectCh := m.client.ListObjects(ctx, m.bucket, optsPublic)
+		for object := range objectCh {
+			if object.Err != nil {
+				handleError(object.Err)
+				return
+			}
+			select {
+			case keyCh <- keyInfo{key: object.Key, time: object.LastModified}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
-// 	go func() {
-// 		defer wg.Done()
-// 		defer func() {
-// 			if r := recover(); r != nil {
-// 				handleError(fmt.Errorf("panic in ListObjects: %v", r))
-// 			}
-// 		}()
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				handleError(fmt.Errorf("panic in ListObjects: %v", r))
+			}
+		}()
 
-// 		if ctx.Err() != nil {
-// 			return
-// 		}
+		if ctx.Err() != nil {
+			return
+		}
 
-// 		objectCh := m.client.ListObjects(ctx, m.bucket, optsPrivate)
-// 		for object := range objectCh {
-// 			if object.Err != nil {
-// 				handleError(object.Err)
-// 				return
-// 			}
-// 			select {
-// 			case keyCh <- keyInfo{key: object.Key, time: object.LastModified}:
-// 			case <-ctx.Done():
-// 				return
-// 			}
-// 		}
-// 	}()
+		objectCh := m.client.ListObjects(ctx, m.bucket, optsPrivate)
+		for object := range objectCh {
+			if object.Err != nil {
+				handleError(object.Err)
+				return
+			}
+			select {
+			case keyCh <- keyInfo{key: object.Key, time: object.LastModified}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
-// 	go func() {
-// 		wg.Wait()
-// 		close(keyCh)
-// 		close(errCh)
-// 	}()
+	go func() {
+		wg.Wait()
+		close(keyCh)
+		close(errCh)
+	}()
 
-// 	collectedKeys := []keyInfo{}
-// collectLoop:
-// 	for {
-// 		select {
-// 		case err, ok := <-errCh:
-// 			if ok && err != nil {
-// 				return nil, "", err
-// 			}
-// 		case ki, ok := <-keyCh:
-// 			if !ok {
-// 				break collectLoop
-// 			}
-// 			collectedKeys = append(collectedKeys, ki)
-// 			if len(collectedKeys) >= maxKeys {
-// 				break collectLoop
-// 			}
-// 		}
-// 	}
+	collectedKeys := []keyInfo{}
+collectLoop:
+	for {
+		select {
+		case err, ok := <-errCh:
+			if ok && err != nil {
+				return nil, "", err
+			}
+		case ki, ok := <-keyCh:
+			if !ok {
+				break collectLoop
+			}
+			collectedKeys = append(collectedKeys, ki)
+			if len(collectedKeys) >= maxKeys {
+				break collectLoop
+			}
+		}
+	}
 
-// 	sort.Slice(collectedKeys, func(i, j int) bool {
-// 		return collectedKeys[i].time.After(collectedKeys[j].time)
-// 	})
+	sort.Slice(collectedKeys, func(i, j int) bool {
+		return collectedKeys[i].time.After(collectedKeys[j].time)
+	})
 
-// 	keys := make([]string, len(collectedKeys))
-// 	for i, k := range collectedKeys {
-// 		keys[i] = k.key
-// 	}
+	keys := make([]string, len(collectedKeys))
+	for i, k := range collectedKeys {
+		keys[i] = k.key
+	}
 
-// 	nextKey := ""
-// 	if len(keys) == maxKeys {
-// 		nextKey = keys[len(keys)-1]
-// 	}
+	nextKey := ""
+	if len(keys) == maxKeys {
+		nextKey = keys[len(keys)-1]
+	}
 
-// 	pastas, err := m.GetFiles(ctx, keys)
-// 	if err != nil {
-// 		return nil, "", err
-// 	}
-// 	return pastas, nextKey, nil
-// }
+	pastas, err := m.GetFiles(ctx, keys)
+	if err != nil {
+		return nil, "", err
+	}
+	return &pastas, nextKey, nil
+}

@@ -10,7 +10,7 @@ CREATE TABLE pastas(
     id serial primary key,
     user_id int,
     hash text not null unique,
-    key text not null unique,
+    object_id text not null unique,
     size int,
     language varchar(50) default 'plaintext',
     visibility varchar(50) default 'public',

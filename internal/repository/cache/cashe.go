@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"pastebin/internal/domain"
+	domain "pastebin/internal/domain/repository"
 
 	"github.com/go-redis/redis/v8"
 )

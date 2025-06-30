@@ -3,7 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
-	"pastebin/internal/domain"
+	domain "pastebin/internal/domain/repository"
 	"pastebin/pkg/dto"
 
 	"github.com/jmoiron/sqlx"

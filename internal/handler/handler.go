@@ -2,17 +2,20 @@ package handler
 
 import (
 	"pastebin/internal/service"
+	"pastebin/pkg/logging"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
 	servises *service.Service
+	logger   *logging.Logger
 }
 
-func NewHandler(servises *service.Service) *Handler {
+func NewHandler(servises *service.Service, logger *logging.Logger) *Handler {
 	return &Handler{
 		servises: servises,
+		logger:   logger,
 	}
 }
 
@@ -25,8 +28,8 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		auth.POST("/create", h.AccessPostMiddleware(), h.CreatePastaHandler) // обработк ошибки при пустом json
 
 		auth.GET("/receive/:objectID", h.AccessByKeyMiddleware(), h.GetPastaHandler)
-		// auth.GET("/out", h.PaginatePublicHandler)
-		// auth.GET("/out/me", h.RequireAuth(), h.PaginateUserIdHandler)
+		// auth.GET("/paginate", h.PaginatePublicHandler)
+		// auth.GET("/paginate/me", h.RequireAuth(), h.PaginateUserIdHandler)
 
 		// auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
 	}

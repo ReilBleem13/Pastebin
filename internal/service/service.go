@@ -1,33 +1,32 @@
 package service
 
 import (
-	"context"
-	"pastebin/internal/models"
+	domain "pastebin/internal/domain/service"
 	"pastebin/internal/repository"
-	"pastebin/pkg/dto"
+	"pastebin/pkg/logging"
 )
 
-type Authorization interface {
-	CreateNewUser(ctx context.Context, user *dto.RequestNewUser) error
-	CheckLogin(ctx context.Context, request *dto.LoginUser) error
-	GenerateToken(ctx context.Context, request *dto.LoginUser) (string, error)
-}
+// type Authorization interface {
+// 	CreateNewUser(ctx context.Context, user *dto.RequestNewUser) error
+// 	CheckLogin(ctx context.Context, request *dto.LoginUser) error
+// 	GenerateToken(ctx context.Context, request *dto.LoginUser) (string, error)
+// }
 
-type Pasta interface {
-	Create(ctx context.Context, req *dto.RequestCreatePasta, userID int) (*models.Pasta, error)
-	Permission(ctx context.Context, hash, password, visibility string, userID int) error
-	Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error)
-	GetText(ctx context.Context, keyText, objectID, hash string) (*string, error)
+// type Pasta interface {
+// 	Create(ctx context.Context, req *dto.RequestCreatePasta, userID int) (*models.Pasta, error)
+// 	Permission(ctx context.Context, hash, password, visibility string, userID int) error
+// 	Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error)
+// 	GetText(ctx context.Context, keyText, objectID, hash string) (*string, error)
 
-	GetVisibility(ctx context.Context, hash string) (string, error) // временно
+// 	GetVisibility(ctx context.Context, hash string) (string, error) // временно
 
-	// CreateOne(ctx context.Context, userID int, visibility, password *string, data []byte) (models.Pasta, error)
-	// GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error
-	// GetMany(ctx context.Context, objectIDs []string) ([]string, error)
-	// DeleteOne(ctx context.Context, hash string) error
-	// DeleteMany(ctx context.Context, objectIDs []string) error
-	// Paginate(ctx context.Context, maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error)
-}
+// 	// CreateOne(ctx context.Context, userID int, visibility, password *string, data []byte) (models.Pasta, error)
+// 	// GetOne(ctx context.Context, pasta *models.PasteWithData, flag bool) error
+// 	// GetMany(ctx context.Context, objectIDs []string) ([]string, error)
+// 	// DeleteOne(ctx context.Context, hash string) error
+// 	// DeleteMany(ctx context.Context, objectIDs []string) error
+// 	// Paginate(ctx context.Context, maxKeys, startAfter string, userID *int) ([]models.PastaPaginated, string, error)
+// }
 
 // type DBMinio interface {
 // 	GetLink(ctx context.Context, hash string) (string, error)
@@ -45,16 +44,15 @@ type Pasta interface {
 // }
 
 type Service struct {
-	Authorization
-	Pasta
+	Authorization domain.Authorization
+	Pasta         domain.Pasta
 	// DBMinio
 	// Cleanup
 }
 
-// объединить minio и dbminio
-func NewService(repo *repository.Repository) *Service {
+func NewService(repo *repository.Repository, logger *logging.Logger) *Service {
 	return &Service{
 		Authorization: NewAuthService(repo),
-		Pasta:         NewPastaService(repo),
+		Pasta:         NewPastaService(repo, logger),
 	}
 }

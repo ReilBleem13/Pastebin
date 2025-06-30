@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"pastebin/internal/domain"
+	domain "pastebin/internal/domain/repository"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
@@ -19,29 +19,39 @@ func NewElastic(client *elasticsearch.Client) domain.Elastic {
 	return &Elastic{client: client}
 }
 
-func (e *Elastic) NewIndex(text *[]byte, key, index string, tags []string) error {
-	start := time.Now()
+type PastaDocument struct {
+	Content string   `json:"content"`
+	Tags    []string `json:"tags,omitempty"`
+}
 
-	doc := map[string]interface{}{
-		"content": *byteToString(text),
-		"tags":    tags,
+func (e *Elastic) NewIndex(text []byte, objectID, index string, tags []string) error {
+	doc := PastaDocument{
+		Content: string(text),
+		Tags:    tags,
 	}
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(doc); err != nil {
-		return err
+		return fmt.Errorf("failed to encode document: %w", err)
 	}
 
-	res, err := e.client.Index(index, &buf, e.client.Index.WithDocumentID(key), e.client.Index.WithRefresh("true"))
+	// флаг true говорит эластику немедленно обновить индекс (высокая нагрузка) (e.client.Index.WithRefresh("true")))
+	res, err := e.client.Index(
+		index,
+		&buf,
+		e.client.Index.WithDocumentID(objectID))
 	if err != nil {
-		return err
+		return fmt.Errorf("indexing request failed: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("ошибка индексации: %s", res.String())
+		var errMap map[string]interface{}
+		if err := json.NewDecoder(res.Body).Decode(&errMap); err != nil {
+			return fmt.Errorf("indexing error, status: %s", res.Status())
+		}
+		return fmt.Errorf("indexing error, status: %s, response: %v", res.Status(), errMap["error"])
 	}
-	log.Printf("Новый индекс. Время выполнения: %v", time.Since(start).Seconds())
 	return nil
 }
 

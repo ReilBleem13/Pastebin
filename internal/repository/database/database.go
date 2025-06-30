@@ -1,7 +1,7 @@
 package database
 
 import (
-	"pastebin/internal/domain"
+	domain "pastebin/internal/domain/repository"
 
 	"github.com/jmoiron/sqlx"
 )

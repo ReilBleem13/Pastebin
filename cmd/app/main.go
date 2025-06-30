@@ -56,8 +56,8 @@ func main() {
 	repo := repostitory.NewRepository(postgres.Client(), redis.Client(),
 		minio.Client(), elastic.Client(), minio.Pool(), cfg.Minio.Bucket)
 
-	services := service.NewService(repo)
-	handlers := handler.NewHandler(services)
+	services := service.NewService(repo, logger)
+	handlers := handler.NewHandler(services, logger)
 
 	srv := new(handler.Server)
 	go func() {

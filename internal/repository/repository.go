@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"pastebin/internal/domain"
+	domain "pastebin/internal/domain/repository"
 	"pastebin/internal/repository/cache"
 	"pastebin/internal/repository/database"
 	"pastebin/internal/repository/elasticsearch"
