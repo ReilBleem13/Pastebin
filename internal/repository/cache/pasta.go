@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
 	"pastebin/internal/models"
@@ -61,7 +60,6 @@ func (r *pastaCache) GetText(ctx context.Context, keyText string) (*string, erro
 			return nil, err
 		}
 	}
-	log.Println("текст из redis") // убрать
 	return &resultText, nil
 }
 
@@ -79,7 +77,5 @@ func (r *pastaCache) GetMeta(ctx context.Context, keyMeta string) (*models.Pasta
 	if err := json.Unmarshal([]byte(resultMeta), &metadata); err != nil {
 		return nil, err
 	}
-	log.Println("метаданые из redis") // убрать
-
 	return &metadata, nil
 }

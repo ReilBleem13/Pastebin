@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
 	"pastebin/internal/models"
@@ -53,15 +54,16 @@ func (m *pastaDatabase) GetVisibility(ctx context.Context, hash string) (string,
 }
 
 func (m *pastaDatabase) GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error) {
-	pasta := &models.Pasta{}
-
-	err := m.db.GetContext(ctx, pasta, fmt.Sprintf(
+	pasta := models.Pasta{}
+	err := m.db.GetContext(ctx, &pasta, fmt.Sprintf(
 		`	SELECT hash, object_id, user_id, size, language, visibility, views, created_at, expires_at 
-			FROM %s WHERE key = $1`, pastasTables), objectID)
+			FROM %s WHERE object_id = $1`, pastasTables), objectID)
 	if err != nil {
 		return nil, err
 	}
-	return pasta, nil
+
+	log.Printf("metadata from db: %+v", pasta)
+	return &pasta, nil
 }
 
 func (m *pastaDatabase) GetPassword(ctx context.Context, hash string) (string, error) {

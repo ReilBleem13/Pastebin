@@ -44,6 +44,7 @@ func NewPastaService(repo *repository.Repository, logger *logging.Logger) domain
 		cache:   repo.Cache.Pasta(),
 		db:      repo.Database.Pasta(),
 		elastic: repo.Elastic,
+		logger:  logger,
 	}
 }
 
@@ -165,116 +166,173 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 	return nil
 }
 
-func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
-	text, err := m.cache.GetText(ctx, keyText)
-	if err == nil {
-		return text, nil
-	}
-	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
-		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
-	}
+// func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
+// 	text, err := m.cache.GetText(ctx, keyText)
+// 	if err == nil {
+// 		return text, nil
+// 	}
+// 	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
+// 		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
+// 	}
 
-	text, err = m.s3.Get(ctx, objectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get file from minio: %w", err)
-	}
-	m.logger.Info("Текст из S3") // убрать
+// 	text, err = m.s3.Get(ctx, objectID)
+// 	if text != nil {
+// 		log.Printf("Text: %s\n", *text)
+// 	}
 
-	if err := m.cache.AddText(ctx, hash, []byte(*text)); err != nil {
-		m.logger.Errorf("error in add text to cache: %v", err)
-	}
-	m.logger.Info("Текст добавлен в Cache") // убрать
-	return text, nil
-}
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to get file from minio: %w", err)
+// 	}
+// 	if err := m.cache.AddText(ctx, hash, []byte(*text)); err != nil {
+// 		m.logger.Errorf("error in add text to cache: %v", err)
+// 	}
+// 	return text, nil
+// }
 
-func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error) {
-	result := &models.PastaWithData{}
+// func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error) {
+// 	result := &models.PastaWithData{}
 
-	objectID, err := m.db.GetKey(ctx, hash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get objectID: %w", err)
-	}
+// 	objectID, err := m.db.GetKey(ctx, hash)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to get objectID: %w", err)
+// 	}
+// 	///
+// 	if objectID == "" {
+// 		return nil, fmt.Errorf("objectID is empty for hash: %s", hash)
+// 	}
+// 	///
+// 	keyMeta := fmt.Sprintf("%s:%s", metaPrefix, hash)
+// 	keyText := fmt.Sprintf("%s:%s", textPrefix, hash)
 
-	keyMeta := fmt.Sprintf("%s:%s", metaPrefix, hash)
-	keyText := fmt.Sprintf("%s:%s", textPrefix, hash)
+// 	if !flag {
+// 		text, err := m.GetText(ctx, keyText, objectID, hash)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		// только инкримент просмотров
+// 		_, err = m.cache.Views(ctx, hash)
+// 		if err != nil {
+// 			m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
+// 		}
+// 		///
+// 		if text == nil {
+// 			return nil, fmt.Errorf("text is nil for hash: %s", hash)
+// 		}
+// 		///
+// 		result.Text = *text
+// 		result.Metadata = nil
+// 		return result, nil
+// 	}
 
-	if !flag {
-		text, err := m.GetText(ctx, keyText, objectID, hash)
-		if err != nil {
-			return nil, err
-		}
-		// только инкримент просмотров
-		_, err = m.cache.Views(ctx, hash)
-		if err != nil {
-			m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
-		}
+// 	textCh := make(chan *string, 1)
+// 	textErrCh := make(chan error, 1)
+// 	metaCh := make(chan *models.Pasta, 1)
+// 	metaErrCh := make(chan error, 1)
 
-		result.Text = *text
-		result.Metadata = nil
-		return result, nil
-	}
+// 	var wg sync.WaitGroup
 
-	textCh := make(chan *string, 1)
-	textErrCh := make(chan error, 1)
-	metaCh := make(chan *models.Pasta, 1)
-	metaErrCh := make(chan error, 1)
+// 	wg.Add(1)
+// 	go func() {
+// 		defer wg.Done()
+// 		text, err := m.GetText(ctx, keyText, objectID, hash)
+// 		if err != nil {
+// 			textErrCh <- err
+// 			return
+// 		}
+// 		///
+// 		if text == nil {
+// 			textErrCh <- fmt.Errorf("text is nil for hash: %s", hash)
+// 			return
+// 		}
+// 		///
+// 		textCh <- text
+// 	}()
 
-	go func() {
-		text, err := m.GetText(ctx, keyText, objectID, hash)
-		if err != nil {
-			textErrCh <- err
-			return
-		}
-		textCh <- text
-	}()
-	go func() {
-		metadata, err := m.cache.GetMeta(ctx, keyMeta)
-		if err == nil {
-			m.logger.Info("Метаданые получены из Cache") //убрать
-			metaCh <- metadata
-			return
-		}
-		if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
-			m.logger.Errorf("failed to get metadata from cache, falling back to DB: %v", err)
-		}
+// 	wg.Add(1)
+// 	go func() {
+// 		defer wg.Done()
+// 		metadata, err := m.cache.GetMeta(ctx, keyMeta)
+// 		if err == nil {
+// 			m.logger.Info("Метаданые получены из Cache") //убрать
+// 			metaCh <- metadata
+// 			return
+// 		}
+// 		if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
+// 			m.logger.Errorf("failed to get metadata from cache, falling back to DB: %v", err)
+// 		}
+// 		metadata, err = m.db.GetMetadata(ctx, objectID)
+// 		if err != nil {
+// 			metaErrCh <- err
+// 			return
+// 		}
+// 		if metadata == nil {
+// 			log.Println("[23120321032137213281372138217389123821798]")
+// 			metaErrCh <- fmt.Errorf("metadata is nil for objectID %s", objectID)
+// 			return
+// 		}
+// 		if err := m.cache.AddMeta(ctx, metadata); err != nil {
+// 			m.logger.Errorf("error in add metadata to cache: %v", err)
+// 		}
+// 	}()
+// 	wg.Wait()
+// 	close(textCh)
+// 	close(textErrCh)
+// 	close(metaCh)
+// 	close(metaErrCh)
 
-		metadata, err = m.db.GetMetadata(ctx, objectID)
-		if err != nil {
-			m.logger.Info("Метаданые получены из DB") //убрать
-			metaErrCh <- err
-			return
-		}
-		if err := m.cache.AddMeta(ctx, metadata); err != nil {
-			m.logger.Errorf("error in add metadata to cache: %v", err)
-		}
-		metaCh <- metadata
-	}()
-	var text *string
-	var metadata *models.Pasta
-	for i := 0; i < 2; i++ {
-		select {
-		case t := <-textCh:
-			text = t
-		case err := <-textErrCh:
-			return nil, err
-		case m := <-metaCh:
-			metadata = m
-		case err := <-metaErrCh:
-			return nil, err
-		}
-	}
+// 	var text *string
+// 	var metadata *models.Pasta
+// 	var textErr, metaErr error
 
-	views, err := m.cache.Views(ctx, hash)
-	if err != nil {
-		m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
-		views = -1
-	}
-	result.Metadata = metadata
-	result.Metadata.Views = views
-	result.Text = *text
+// 	for i := 0; i < 2; i++ {
+// 		select {
+// 		case t := <-textCh:
+// 			if t != nil {
+// 				text = t
+// 			}
+// 		case err := <-textErrCh:
+// 			if err != nil {
+// 				textErr = err
+// 			}
+// 		case m := <-metaCh:
+// 			if m != nil {
+// 				metadata = m
+// 			}
+// 		case err := <-metaErrCh:
+// 			if err != nil {
+// 				metaErr = err
+// 			}
+// 		}
+// 	}
+// 	///
+// 	if textErr != nil {
+// 		return nil, textErr
+// 	}
+// 	if metaErr != nil {
+// 		return nil, metaErr
+// 	}
+// 	///
 
-	return result, nil
-}
+// 	///
+// 	if text == nil {
+// 		return nil, fmt.Errorf("text is nil for hash: %s", hash)
+// 	}
+// 	if metadata == nil {
+// 		return nil, fmt.Errorf("metadata is nil for hash: %s", hash)
+// 	}
+// 	///
+// 	views, err := m.cache.Views(ctx, hash)
+// 	if err != nil {
+// 		m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
+// 		views = -1
+// 	}
+
+// 	result.Metadata = metadata
+// 	result.Metadata.Views = views
+// 	result.Text = *text
+
+// 	return result, nil
+// }
 
 func (m *PastaService) Delete(ctx context.Context, hash string) error {
 	key, err := m.db.DeleteMetadata(ctx, hash)
@@ -356,6 +414,177 @@ func formResponse(pastas *[]string) *[]models.PastaPaginated {
 	return &responses
 }
 
-// func prtSrt(s string) *string {
-// 	return &s
-// }
+func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
+	m.logger.Infof("GET TEXT. Входные данные. KeyText: %s; ObjectID: %s; Hash: %s", keyText, objectID, hash)
+
+	text, err := m.cache.GetText(ctx, keyText)
+	if err == nil {
+		return text, nil
+	}
+
+	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
+		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
+	} else {
+		m.logger.Info("GET TEXXT. Ключ в Cache не был найден!")
+	}
+
+	text, err = m.s3.Get(ctx, objectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file from minio: %w", err)
+	}
+
+	if text != nil {
+		m.logger.Infof("GET TEXT. Полученный текст с MINIO: %s", *text)
+	} else {
+		m.logger.Info("GET TEXT. Полученный текст с MINIO ПУУССТТТ")
+	}
+	if err := m.cache.AddText(ctx, hash, []byte(*text)); err != nil {
+		m.logger.Errorf("error in add text to cache: %v", err)
+	}
+	return text, nil
+}
+
+func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error) {
+	result := models.PastaWithData{}
+	m.logger.Infof("GET. Входные данные. Hash: %s; Flag: %v", hash, flag)
+
+	objectID, err := m.db.GetKey(ctx, hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get objectID: %w", err)
+	}
+	m.logger.Infof("GET. objectID: %s", objectID)
+
+	keyMeta := fmt.Sprintf("%s:%s", metaPrefix, hash)
+	keyText := fmt.Sprintf("%s:%s", textPrefix, hash)
+
+	if !flag {
+		text, err := m.GetText(ctx, keyText, objectID, hash)
+		if err != nil {
+			return nil, err
+		}
+
+		if text != nil {
+			m.logger.Infof("GET. Полученный текст с GetText: %s", *text)
+		} else {
+			m.logger.Info("GET. Полученный текст с GetText")
+		}
+
+		_, err = m.cache.Views(ctx, hash)
+		if err != nil {
+			m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
+		}
+
+		result.Text = *text
+		result.Metadata = nil
+		return &result, nil
+	}
+
+	textCh := make(chan *string, 1)
+	textErrCh := make(chan error, 1)
+	metaCh := make(chan *models.Pasta, 1)
+	metaErrCh := make(chan error, 1)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		text, err := m.GetText(ctx, keyText, objectID, hash)
+		m.logger.Infof("GET. Первая горутина. Текст из GET TEXT: %s", *text)
+		if err != nil {
+			textErrCh <- err
+			return
+		}
+		textCh <- text
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		metadata, err := m.cache.GetMeta(ctx, keyMeta)
+		if err == nil {
+			m.logger.Infof("GET. Вторая горутина. Метаданые из cache.GetMeta: %+v", metadata)
+			metaCh <- metadata
+			return
+		}
+		m.logger.Infof("GET. Вторая горутина. ошибка в кеше. Метаданые из cache.GetMeta: %+v", metadata)
+
+		if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
+			m.logger.Errorf("failed to get metadata from cache, falling back to DB: %v", err)
+		}
+
+		metadata, err = m.db.GetMetadata(ctx, objectID)
+		if err != nil {
+			m.logger.Infof("GET. Вторая горутина. ошибка в бд. Метаданые из db.GetMetadata: %+v", metadata)
+			metaErrCh <- err
+			return
+		}
+		m.logger.Infof("GET. Вторая горутина. Метаданые из db.GetMetadata: %+v", metadata)
+
+		if metadata == nil {
+			m.logger.Info("GET. Вторая горутина. Метаданые пустые")
+			return
+		}
+		if err := m.cache.AddMeta(ctx, metadata); err != nil {
+			m.logger.Errorf("error in add metadata to cache: %v", err)
+		}
+		metaCh <- metadata
+	}()
+	wg.Wait()
+	close(textCh)
+	close(textErrCh)
+	close(metaCh)
+	close(metaErrCh)
+
+	var (
+		text     *string
+		textErr  error
+		metadata *models.Pasta
+		metaErr  error
+	)
+
+	if t, ok := <-textCh; ok && t != nil {
+		m.logger.Infof("GET. Текст из канала textCh: %s", *t)
+		text = t
+	}
+	if err, ok := <-textErrCh; ok && err != nil {
+		m.logger.Infof("GET. Ошибка чтения из канала textErrCh: %v", err)
+		textErr = err
+	}
+	if meta, ok := <-metaCh; ok && meta != nil {
+		m.logger.Infof("GET. Метаданные из канала metaCh: %+v", meta)
+		metadata = meta
+	}
+	if err, ok := <-metaErrCh; ok && err != nil {
+		m.logger.Infof("GET. Ошибка чтения из канала metaErrCh: %v", err)
+		metaErr = err
+	}
+
+	if textErr != nil {
+		m.logger.Infof("GET. Ошибка textErrCh: %v", err)
+		return nil, textErr
+	}
+	if metaErr != nil {
+		m.logger.Infof("GET. Ошибка metaErrCh: %v", err)
+		return nil, metaErr
+	}
+	if text == nil {
+		m.logger.Infof("GET. text is nil: %v", err)
+		return nil, fmt.Errorf("text is nil")
+	}
+	if metadata == nil {
+		m.logger.Infof("GET. meta is nil: %v", err)
+		return nil, fmt.Errorf("metadata is nil")
+	}
+
+	views, err := m.cache.Views(ctx, hash)
+	if err != nil {
+		m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
+		views = -1
+	}
+	m.logger.Infof("GET. Просмотры: %d", views)
+
+	result.Metadata = metadata
+	result.Metadata.Views = views
+	result.Text = *text
+	return &result, nil
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"pastebin/internal/config"
+	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
 )
@@ -25,6 +26,7 @@ func NewElasticClient(cfg config.ElasticConfig) (*ElasticClient, error) {
 }
 
 func (e *ElasticClient) EnsureIndex(index string) error {
+	time.Sleep(3 * time.Second)
 	res, err := e.client.Indices.Exists([]string{index})
 	if err != nil {
 		return err

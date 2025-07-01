@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"log"
 	customerrors "pastebin/internal/errors"
 	"pastebin/pkg/dto"
 	"strconv"
@@ -70,6 +71,7 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		h.logger.Tracef("func() GetPastaHandler. Execution time: %.2f", time.Since(start).Seconds())
 	}()
 
+	log.Println(1)
 	var passwordRequest dto.Password
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.BindJSON(&passwordRequest); err != nil {
@@ -77,21 +79,21 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 			return
 		}
 	}
-
+	log.Println(2)
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
 		h.logger.Errorf("internal server error during getting userID from context: %v", err)
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-
+	log.Println(3)
 	visibility, err := h.GetVisibility(c)
 	if errors.Is(err, customerrors.ErrInternal) {
 		h.logger.Errorf("internal server error during getting visibility from context: %v", err)
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-
+	log.Println(4)
 	hash := c.Param("objectID")
 
 	hasMetadata, err := strconv.ParseBool(c.DefaultQuery("metadata", "false"))
@@ -99,8 +101,9 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid 'metadata' query parameter, must be 'true' of 'false'"})
 		return
 	}
+	log.Println(hasMetadata)
 	ctx := c.Request.Context()
-
+	log.Println(5)
 	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
 	if errors.Is(err, customerrors.ErrPastaNotFound) {
 		c.JSON(404, gin.H{"error": err.Error()})
@@ -111,17 +114,17 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		return
 	} else if err != nil {
 		h.logger.Errorf("internal server error during checking permission: %v", err)
-		c.JSON(500, gin.H{"error": gin.H{"error": "internal error occured while checking permission"}})
+		c.JSON(500, gin.H{"error": "internal error occured while checking permission"})
 		return
 	}
-
+	log.Println(6)
 	pasta, err := h.servises.Pasta.Get(ctx, hash, hasMetadata)
 	if err != nil {
 		h.logger.Errorf("internal server error during getting creation: %v", err)
-		c.JSON(500, gin.H{"error": gin.H{"error": "internal error occured while getting the pasta"}})
+		c.JSON(500, gin.H{"error": "internal error occured while getting the pasta"})
 		return
 	}
-
+	log.Println(7)
 	c.JSON(200, dto.GetPastaResponse{
 		Status:   200,
 		Message:  "Successfully got pasta",
@@ -171,7 +174,7 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 		return
 	} else if err != nil {
 		h.logger.Errorf("internal server error during checking permission: %v", err)
-		c.JSON(500, gin.H{"error": gin.H{"error": "internal error occured while checking permission"}})
+		c.JSON(500, gin.H{"error": "internal error occured while checking permission"})
 		return
 	}
 
@@ -180,7 +183,7 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "pasta not found"})
 		} else {
 			h.logger.Errorf("internal server error during deleting pasta: %v", err)
-			c.JSON(500, gin.H{"error": gin.H{"error": "internal error occured while deleting pasta"}})
+			c.JSON(500, gin.H{"error": "internal error occured while deleting pasta"})
 		}
 		return
 	}
@@ -202,7 +205,8 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
 			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5."})
 		} else {
-			c.JSON(500, gin.H{"error": err.Error()})
+			h.logger.Errorf("internal server error during paginating public: %v", err)
+			c.JSON(500, gin.H{"error": "internal error occured while paginating public"})
 		}
 		return
 	}
@@ -217,7 +221,7 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 func (h *Handler) PaginateUserIdHandler(c *gin.Context) {
 	start := time.Now()
 	defer func() {
-		h.logger.Tracef("func() PaginatePublicHandler. Execution time: %.2f", time.Since(start).Seconds())
+		h.logger.Tracef("func() PaginateUserIdHandler. Execution time: %.2f", time.Since(start).Seconds())
 	}()
 
 	rawLimit := c.Query("limit")
