@@ -62,7 +62,7 @@ func (m *pastaDatabase) GetMetadata(ctx context.Context, objectID string) (*mode
 		return nil, err
 	}
 
-	log.Printf("metadata from db: %+v", pasta)
+	log.Printf("metadata from db: %+v\n", pasta)
 	return &pasta, nil
 }
 
@@ -77,6 +77,16 @@ func (m *pastaDatabase) GetPassword(ctx context.Context, hash string) (string, e
 		return "", err
 	}
 	return hashPassword, nil
+}
+
+func (m *pastaDatabase) GetHash(ctx context.Context, objectID string) (string, error) {
+	var hash string
+	log.Println(objectID)
+	err := m.db.GetContext(ctx, &hash, fmt.Sprintf("SELECT hash FROM %s WHERE object_id = $1", pastasTables), objectID)
+	if err != nil {
+		return "", err
+	}
+	return hash, nil
 }
 
 func (m *pastaDatabase) AddViews(ctx context.Context, hash string) error {
@@ -179,4 +189,36 @@ func (m *pastaDatabase) IsAccessPrivate(ctx context.Context, userID int, hash st
 		return exists, err
 	}
 	return exists, nil
+}
+
+func (m *pastaDatabase) PaginateV1(ctx context.Context, limit, offset int) (*[]string, error) {
+	query := `
+		SELECT object_id 
+		FROM pastas 
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2`
+
+	var objectIDs []string
+	err := m.db.SelectContext(ctx, &objectIDs, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("PaginateV1.pasta.go.db: ObjectIDS: %v", objectIDs)
+	return &objectIDs, nil
+}
+
+func (m *pastaDatabase) GetManyMetadata(ctx context.Context, objectID *[]string) (*[]models.Pasta, error) {
+	var metadatas []models.Pasta
+
+	query := `
+		SELECT hash, object_id, user_id, size, language, visibility, views, created_at, expires_at 	
+		FROM pastas
+		WHERE object_id = ANY($1)
+	`
+
+	err := m.db.SelectContext(ctx, &metadatas, query, pq.Array(*objectID))
+	if err != nil {
+		return nil, err
+	}
+	return &metadatas, nil
 }

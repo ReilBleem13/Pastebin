@@ -14,6 +14,8 @@ type Pasta interface {
 	Delete(ctx context.Context, hash string) error
 	Paginate(ctx context.Context, rawLimit, startAfter string, userID *int) (*[]models.PastaPaginated, string, error)
 
+	Paginate1(ctx context.Context, rawLimit, rawPage string, hasMetadata bool) (*[]dto.TextsWithMetadata, error)
+
 	GetVisibility(ctx context.Context, hash string) (string, error) // временно
 
 	// CreateOne(ctx context.Context, userID int, visibility, password *string, data []byte) (models.Pasta, error)

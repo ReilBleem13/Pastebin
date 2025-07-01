@@ -29,7 +29,23 @@ type GetPastaResponse struct {
 }
 
 type PaginatedPastaDTO struct {
-	Status       int                     `json:"status"`
-	NextObjectID string                  `json:"object_id"`
-	Pastas       []models.PastaPaginated `json:"pasta"`
+	Status int                 `json:"status"`
+	Pastas []TextsWithMetadata `json:"result"`
 }
+
+type Entry struct {
+	Text     string    `json:"text"`
+	ObjectID string    `json:"-"`
+	Time     time.Time `json:"-"`
+}
+
+type TextsWithMetadata struct {
+	Text     string        `json:"text"`
+	Metadata *models.Pasta `json:"metadata,omitempty"`
+}
+
+// type PaginatedPastaDTO struct {
+// 	Status       int                     `json:"status"`
+// 	NextObjectID string                  `json:"object_id,omitempty"`
+// 	Pastas       []models.PastaPaginated `json:"pasta"`
+// }

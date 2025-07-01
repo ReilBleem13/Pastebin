@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	domainrepo "pastebin/internal/domain/repository"
 	domainservice "pastebin/internal/domain/service"
 	customerrors "pastebin/internal/errors"
@@ -28,14 +29,17 @@ type PastaService struct {
 
 const (
 	defaultNewFilePrefix string = "public:"
-	indexForElastic      string = "pastas" // добавить в структуру конфиг
-	visibilityIsPrivate  string = "private"
+	indexForElastic      string = "pastas" // добавить в структуру конфиг\\
+
+	visibilityIsPrivate string = "private"
+	visibilityIsPublic  string = "public"
 
 	textPrefix string = "text"
 	metaPrefix string = "meta"
 	userPrefix string = "user"
 
-	defaultMaxObject int = 5
+	defaultLimit int = 5
+	defaultPage  int = 1
 )
 
 func NewPastaService(repo *repository.Repository, logger *logging.Logger) domainservice.Pasta {
@@ -166,174 +170,6 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 	return nil
 }
 
-// func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
-// 	text, err := m.cache.GetText(ctx, keyText)
-// 	if err == nil {
-// 		return text, nil
-// 	}
-// 	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
-// 		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
-// 	}
-
-// 	text, err = m.s3.Get(ctx, objectID)
-// 	if text != nil {
-// 		log.Printf("Text: %s\n", *text)
-// 	}
-
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to get file from minio: %w", err)
-// 	}
-// 	if err := m.cache.AddText(ctx, hash, []byte(*text)); err != nil {
-// 		m.logger.Errorf("error in add text to cache: %v", err)
-// 	}
-// 	return text, nil
-// }
-
-// func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error) {
-// 	result := &models.PastaWithData{}
-
-// 	objectID, err := m.db.GetKey(ctx, hash)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to get objectID: %w", err)
-// 	}
-// 	///
-// 	if objectID == "" {
-// 		return nil, fmt.Errorf("objectID is empty for hash: %s", hash)
-// 	}
-// 	///
-// 	keyMeta := fmt.Sprintf("%s:%s", metaPrefix, hash)
-// 	keyText := fmt.Sprintf("%s:%s", textPrefix, hash)
-
-// 	if !flag {
-// 		text, err := m.GetText(ctx, keyText, objectID, hash)
-// 		if err != nil {
-// 			return nil, err
-// 		}
-// 		// только инкримент просмотров
-// 		_, err = m.cache.Views(ctx, hash)
-// 		if err != nil {
-// 			m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
-// 		}
-// 		///
-// 		if text == nil {
-// 			return nil, fmt.Errorf("text is nil for hash: %s", hash)
-// 		}
-// 		///
-// 		result.Text = *text
-// 		result.Metadata = nil
-// 		return result, nil
-// 	}
-
-// 	textCh := make(chan *string, 1)
-// 	textErrCh := make(chan error, 1)
-// 	metaCh := make(chan *models.Pasta, 1)
-// 	metaErrCh := make(chan error, 1)
-
-// 	var wg sync.WaitGroup
-
-// 	wg.Add(1)
-// 	go func() {
-// 		defer wg.Done()
-// 		text, err := m.GetText(ctx, keyText, objectID, hash)
-// 		if err != nil {
-// 			textErrCh <- err
-// 			return
-// 		}
-// 		///
-// 		if text == nil {
-// 			textErrCh <- fmt.Errorf("text is nil for hash: %s", hash)
-// 			return
-// 		}
-// 		///
-// 		textCh <- text
-// 	}()
-
-// 	wg.Add(1)
-// 	go func() {
-// 		defer wg.Done()
-// 		metadata, err := m.cache.GetMeta(ctx, keyMeta)
-// 		if err == nil {
-// 			m.logger.Info("Метаданые получены из Cache") //убрать
-// 			metaCh <- metadata
-// 			return
-// 		}
-// 		if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
-// 			m.logger.Errorf("failed to get metadata from cache, falling back to DB: %v", err)
-// 		}
-// 		metadata, err = m.db.GetMetadata(ctx, objectID)
-// 		if err != nil {
-// 			metaErrCh <- err
-// 			return
-// 		}
-// 		if metadata == nil {
-// 			log.Println("[23120321032137213281372138217389123821798]")
-// 			metaErrCh <- fmt.Errorf("metadata is nil for objectID %s", objectID)
-// 			return
-// 		}
-// 		if err := m.cache.AddMeta(ctx, metadata); err != nil {
-// 			m.logger.Errorf("error in add metadata to cache: %v", err)
-// 		}
-// 	}()
-// 	wg.Wait()
-// 	close(textCh)
-// 	close(textErrCh)
-// 	close(metaCh)
-// 	close(metaErrCh)
-
-// 	var text *string
-// 	var metadata *models.Pasta
-// 	var textErr, metaErr error
-
-// 	for i := 0; i < 2; i++ {
-// 		select {
-// 		case t := <-textCh:
-// 			if t != nil {
-// 				text = t
-// 			}
-// 		case err := <-textErrCh:
-// 			if err != nil {
-// 				textErr = err
-// 			}
-// 		case m := <-metaCh:
-// 			if m != nil {
-// 				metadata = m
-// 			}
-// 		case err := <-metaErrCh:
-// 			if err != nil {
-// 				metaErr = err
-// 			}
-// 		}
-// 	}
-// 	///
-// 	if textErr != nil {
-// 		return nil, textErr
-// 	}
-// 	if metaErr != nil {
-// 		return nil, metaErr
-// 	}
-// 	///
-
-// 	///
-// 	if text == nil {
-// 		return nil, fmt.Errorf("text is nil for hash: %s", hash)
-// 	}
-// 	if metadata == nil {
-// 		return nil, fmt.Errorf("metadata is nil for hash: %s", hash)
-// 	}
-// 	///
-// 	views, err := m.cache.Views(ctx, hash)
-// 	if err != nil {
-// 		m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
-// 		views = -1
-// 	}
-
-// 	result.Metadata = metadata
-// 	result.Metadata.Views = views
-// 	result.Text = *text
-
-// 	return result, nil
-// }
-
 func (m *PastaService) Delete(ctx context.Context, hash string) error {
 	key, err := m.db.DeleteMetadata(ctx, hash)
 	if err != nil {
@@ -357,10 +193,13 @@ func (m *PastaService) Delete(ctx context.Context, hash string) error {
 // }
 
 func (m *PastaService) Paginate(ctx context.Context, rawLimit, startAfter string, userID *int) (*[]models.PastaPaginated, string, error) {
+	if userID != nil {
+		log.Printf("Входные данные. Limit: %s. StartAfter %s. UserID: %d: ", rawLimit, startAfter, *userID)
+	}
 	var limit int
 
 	if rawLimit == "" {
-		limit = defaultMaxObject
+		limit = defaultLimit
 	} else {
 		var err error
 		limit, err = strconv.Atoi(rawLimit)
@@ -368,37 +207,67 @@ func (m *PastaService) Paginate(ctx context.Context, rawLimit, startAfter string
 			return nil, "", customerrors.ErrInvalidQueryParament
 		}
 		if limit < 5 {
-			limit = defaultMaxObject
+			limit = defaultLimit
 		}
 	}
 
-	exists, err := m.db.IsPastaExistsByObjectID(ctx, startAfter)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to check is pasta exists by objectID: %w", err)
+	var objectID string
+
+	if startAfter != "" {
+		var err error
+		exists, err := m.db.IsPastaExists(ctx, startAfter)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to check is pasta exists by objectID: %w", err)
+		}
+		if !exists {
+			return nil, "", customerrors.ErrPastaNotFound
+		}
+		objectID, err = m.db.GetKey(ctx, startAfter)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get objectID")
+		}
 	}
+	prefix := visibilityIsPublic
 
-	if !exists {
-		return nil, "", customerrors.ErrPastaNotFound
-	}
-
-	prefix := visibilityIsPrivate
-
+	log.Printf("ObjectID: %s", objectID)
 	if userID != nil {
 		prefix := fmt.Sprintf("%s:%d", userPrefix, *userID)
-		pastas, nextKey, err := m.s3.PaginateFilesByUserID(ctx, limit, startAfter, prefix)
+		pastas, nextKey, err := m.s3.PaginateFilesByUserID(ctx, limit, objectID, prefix)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to paginate files by userID: %w", err)
 		}
-		responses := formResponse(pastas)
-		return responses, nextKey, nil
-	}
+		///
+		var hash string
+		if nextKey != "" {
+			var err error
+			hash, err = m.db.GetHash(ctx, nextKey)
+			if err != nil {
+				return nil, "", err
+			}
+		}
+		///
 
-	pastas, nextKey, err := m.s3.PaginateFiles(ctx, limit, startAfter, prefix)
+		responses := formResponse(pastas)
+		return responses, hash, nil
+	}
+	log.Println("Я пошел не туда куда нужно!")
+	pastas, nextKey, err := m.s3.PaginateFiles(ctx, limit, objectID, prefix)
 	if err != nil {
 		return nil, "", err
 	}
+
+	///
+	var hash string
+	if nextKey != "" {
+		var err error
+		hash, err = m.db.GetHash(ctx, nextKey)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	///
 	responses := formResponse(pastas)
-	return responses, nextKey, nil
+	return responses, hash, nil
 }
 
 func formResponse(pastas *[]string) *[]models.PastaPaginated {
@@ -415,8 +284,6 @@ func formResponse(pastas *[]string) *[]models.PastaPaginated {
 }
 
 func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
-	m.logger.Infof("GET TEXT. Входные данные. KeyText: %s; ObjectID: %s; Hash: %s", keyText, objectID, hash)
-
 	text, err := m.cache.GetText(ctx, keyText)
 	if err == nil {
 		return text, nil
@@ -424,20 +291,13 @@ func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash stri
 
 	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
 		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
-	} else {
-		m.logger.Info("GET TEXXT. Ключ в Cache не был найден!")
 	}
 
-	text, err = m.s3.Get(ctx, objectID)
+	text, _, err = m.s3.Get(ctx, objectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file from minio: %w", err)
 	}
 
-	if text != nil {
-		m.logger.Infof("GET TEXT. Полученный текст с MINIO: %s", *text)
-	} else {
-		m.logger.Info("GET TEXT. Полученный текст с MINIO ПУУССТТТ")
-	}
 	if err := m.cache.AddText(ctx, hash, []byte(*text)); err != nil {
 		m.logger.Errorf("error in add text to cache: %v", err)
 	}
@@ -446,13 +306,11 @@ func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash stri
 
 func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error) {
 	result := models.PastaWithData{}
-	m.logger.Infof("GET. Входные данные. Hash: %s; Flag: %v", hash, flag)
 
 	objectID, err := m.db.GetKey(ctx, hash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get objectID: %w", err)
 	}
-	m.logger.Infof("GET. objectID: %s", objectID)
 
 	keyMeta := fmt.Sprintf("%s:%s", metaPrefix, hash)
 	keyText := fmt.Sprintf("%s:%s", textPrefix, hash)
@@ -461,12 +319,6 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 		text, err := m.GetText(ctx, keyText, objectID, hash)
 		if err != nil {
 			return nil, err
-		}
-
-		if text != nil {
-			m.logger.Infof("GET. Полученный текст с GetText: %s", *text)
-		} else {
-			m.logger.Info("GET. Полученный текст с GetText")
 		}
 
 		_, err = m.cache.Views(ctx, hash)
@@ -489,7 +341,6 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 	go func() {
 		defer wg.Done()
 		text, err := m.GetText(ctx, keyText, objectID, hash)
-		m.logger.Infof("GET. Первая горутина. Текст из GET TEXT: %s", *text)
 		if err != nil {
 			textErrCh <- err
 			return
@@ -502,11 +353,9 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 		defer wg.Done()
 		metadata, err := m.cache.GetMeta(ctx, keyMeta)
 		if err == nil {
-			m.logger.Infof("GET. Вторая горутина. Метаданые из cache.GetMeta: %+v", metadata)
 			metaCh <- metadata
 			return
 		}
-		m.logger.Infof("GET. Вторая горутина. ошибка в кеше. Метаданые из cache.GetMeta: %+v", metadata)
 
 		if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
 			m.logger.Errorf("failed to get metadata from cache, falling back to DB: %v", err)
@@ -514,16 +363,10 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 
 		metadata, err = m.db.GetMetadata(ctx, objectID)
 		if err != nil {
-			m.logger.Infof("GET. Вторая горутина. ошибка в бд. Метаданые из db.GetMetadata: %+v", metadata)
 			metaErrCh <- err
 			return
 		}
-		m.logger.Infof("GET. Вторая горутина. Метаданые из db.GetMetadata: %+v", metadata)
 
-		if metadata == nil {
-			m.logger.Info("GET. Вторая горутина. Метаданые пустые")
-			return
-		}
 		if err := m.cache.AddMeta(ctx, metadata); err != nil {
 			m.logger.Errorf("error in add metadata to cache: %v", err)
 		}
@@ -543,37 +386,23 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 	)
 
 	if t, ok := <-textCh; ok && t != nil {
-		m.logger.Infof("GET. Текст из канала textCh: %s", *t)
 		text = t
 	}
 	if err, ok := <-textErrCh; ok && err != nil {
-		m.logger.Infof("GET. Ошибка чтения из канала textErrCh: %v", err)
 		textErr = err
 	}
 	if meta, ok := <-metaCh; ok && meta != nil {
-		m.logger.Infof("GET. Метаданные из канала metaCh: %+v", meta)
 		metadata = meta
 	}
 	if err, ok := <-metaErrCh; ok && err != nil {
-		m.logger.Infof("GET. Ошибка чтения из канала metaErrCh: %v", err)
 		metaErr = err
 	}
 
 	if textErr != nil {
-		m.logger.Infof("GET. Ошибка textErrCh: %v", err)
 		return nil, textErr
 	}
 	if metaErr != nil {
-		m.logger.Infof("GET. Ошибка metaErrCh: %v", err)
 		return nil, metaErr
-	}
-	if text == nil {
-		m.logger.Infof("GET. text is nil: %v", err)
-		return nil, fmt.Errorf("text is nil")
-	}
-	if metadata == nil {
-		m.logger.Infof("GET. meta is nil: %v", err)
-		return nil, fmt.Errorf("metadata is nil")
 	}
 
 	views, err := m.cache.Views(ctx, hash)
@@ -581,10 +410,132 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 		m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
 		views = -1
 	}
-	m.logger.Infof("GET. Просмотры: %d", views)
 
 	result.Metadata = metadata
 	result.Metadata.Views = views
 	result.Text = *text
 	return &result, nil
+}
+
+func (m *PastaService) Paginate1(ctx context.Context, rawLimit, rawPage string, hasMetadata bool) (*[]dto.TextsWithMetadata, error) {
+	var limit, page int
+
+	if rawLimit == "" {
+		limit = defaultLimit
+	} else {
+		var err error
+		limit, err = strconv.Atoi(rawLimit)
+		if err != nil {
+			return nil, customerrors.ErrInvalidQueryParament
+		}
+		if limit < defaultLimit {
+			limit = defaultLimit
+		}
+	}
+
+	if rawPage == "" {
+		page = defaultPage
+	} else {
+		var err error
+		page, err = strconv.Atoi(rawPage)
+		if err != nil {
+			return nil, customerrors.ErrInvalidQueryParament
+		}
+		if page < defaultPage {
+			page = defaultPage
+		}
+	}
+	offset := (page - 1) * limit
+
+	objectIDs, err := m.db.PaginateV1(ctx, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to paginate from db: %w", err)
+	}
+
+	if objectIDs == nil {
+		return nil, customerrors.ErrPastaNotFound
+	}
+
+	wg := &sync.WaitGroup{}
+
+	errMetaCh := make(chan error, 1)
+	metadatasCh := make(chan *[]models.Pasta, 1)
+
+	errTextsCh := make(chan error, 1)
+	textsCh := make(chan *[]dto.Entry, 1)
+
+	if hasMetadata {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			metadatas, err := m.db.GetManyMetadata(ctx, objectIDs)
+			if err != nil {
+				errMetaCh <- fmt.Errorf("failed to get metadatas from db: %w", err)
+				return
+			}
+
+			if metadatas != nil {
+				metadatasCh <- metadatas
+				return
+			} else {
+				errMetaCh <- fmt.Errorf("metadatas are empty")
+				return
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		texts, err := m.s3.GetFiles(ctx, *objectIDs)
+		if err != nil {
+			errTextsCh <- fmt.Errorf("failed to get pastas from minio: %w", err)
+			return
+		}
+
+		if texts != nil {
+			textsCh <- texts
+			return
+		} else {
+			errTextsCh <- fmt.Errorf("texts are empty")
+			return
+		}
+	}()
+	wg.Wait()
+
+	var metadatas *[]models.Pasta
+	var texts *[]dto.Entry
+
+	if hasMetadata {
+		var errMeta, errTexts error
+
+		for i := 0; i < 2; i++ {
+			select {
+			case metadatas = <-metadatasCh:
+			case errMeta = <-errMetaCh:
+			case texts = <-textsCh:
+			case errTexts = <-errTextsCh:
+			}
+		}
+
+		if errMeta != nil {
+			return nil, errMeta
+		}
+		if errTexts != nil {
+			return nil, errTexts
+		}
+	} else {
+		var errTexts error
+
+		select {
+		case texts = <-textsCh:
+		case errTexts = <-errTextsCh:
+		}
+
+		if errTexts != nil {
+			return nil, errTexts
+		}
+	}
+	result := utils.MergeEntriesWithPasta(texts, metadatas)
+	return result, nil
 }

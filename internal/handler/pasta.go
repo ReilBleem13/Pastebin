@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"log"
 	customerrors "pastebin/internal/errors"
 	"pastebin/pkg/dto"
 	"strconv"
@@ -71,7 +70,6 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		h.logger.Tracef("func() GetPastaHandler. Execution time: %.2f", time.Since(start).Seconds())
 	}()
 
-	log.Println(1)
 	var passwordRequest dto.Password
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.BindJSON(&passwordRequest); err != nil {
@@ -79,21 +77,18 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 			return
 		}
 	}
-	log.Println(2)
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
 		h.logger.Errorf("internal server error during getting userID from context: %v", err)
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	log.Println(3)
 	visibility, err := h.GetVisibility(c)
 	if errors.Is(err, customerrors.ErrInternal) {
 		h.logger.Errorf("internal server error during getting visibility from context: %v", err)
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	log.Println(4)
 	hash := c.Param("objectID")
 
 	hasMetadata, err := strconv.ParseBool(c.DefaultQuery("metadata", "false"))
@@ -101,9 +96,8 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid 'metadata' query parameter, must be 'true' of 'false'"})
 		return
 	}
-	log.Println(hasMetadata)
 	ctx := c.Request.Context()
-	log.Println(5)
+
 	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
 	if errors.Is(err, customerrors.ErrPastaNotFound) {
 		c.JSON(404, gin.H{"error": err.Error()})
@@ -117,14 +111,14 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "internal error occured while checking permission"})
 		return
 	}
-	log.Println(6)
+
 	pasta, err := h.servises.Pasta.Get(ctx, hash, hasMetadata)
 	if err != nil {
 		h.logger.Errorf("internal server error during getting creation: %v", err)
 		c.JSON(500, gin.H{"error": "internal error occured while getting the pasta"})
 		return
 	}
-	log.Println(7)
+
 	c.JSON(200, dto.GetPastaResponse{
 		Status:   200,
 		Message:  "Successfully got pasta",
@@ -165,16 +159,16 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
-	if errors.Is(err, customerrors.ErrPastaNotFound) {
-		c.JSON(404, gin.H{"error": err.Error()})
-		return
-	} else if errors.Is(err, customerrors.ErrNoAccess) ||
-		errors.Is(err, customerrors.ErrWrongPassword) {
-		c.JSON(403, gin.H{"error": err.Error()})
-		return
-	} else if err != nil {
-		h.logger.Errorf("internal server error during checking permission: %v", err)
-		c.JSON(500, gin.H{"error": "internal error occured while checking permission"})
+	if err != nil {
+		if errors.Is(err, customerrors.ErrPastaNotFound) {
+			c.JSON(404, gin.H{"error": err.Error()})
+		} else if errors.Is(err, customerrors.ErrNoAccess) ||
+			errors.Is(err, customerrors.ErrWrongPassword) {
+			c.JSON(403, gin.H{"error": err.Error()})
+		} else {
+			h.logger.Errorf("internal server error during checking permission: %v", err)
+			c.JSON(500, gin.H{"error": "internal error occured while checking permission"})
+		}
 		return
 	}
 
@@ -196,14 +190,23 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 		h.logger.Tracef("func() PaginatePublicHandler. Execution time: %.2f", time.Since(start).Seconds())
 	}()
 
-	rawMaxObject := c.Query("limit")
-	rawStartAfter := c.Query("starting")
+	rawLimit := c.Query("limit")
+	rawPage := c.Query("page")
+
+	hasMetadata, err := strconv.ParseBool(c.DefaultQuery("metadata", "false"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid 'metadata' query parameter, must be 'true' of 'false'"})
+		return
+	}
 
 	ctx := c.Request.Context()
-	result, nextKey, err := h.servises.Pasta.Paginate(ctx, rawMaxObject, rawStartAfter, nil)
+
+	result, err := h.servises.Pasta.Paginate1(ctx, rawLimit, rawPage, hasMetadata)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
-			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5."})
+			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5 and page more than 0."})
+		} else if errors.Is(err, customerrors.ErrPastaNotFound) {
+			c.JSON(200, gin.H{"status": "notes not found"})
 		} else {
 			h.logger.Errorf("internal server error during paginating public: %v", err)
 			c.JSON(500, gin.H{"error": "internal error occured while paginating public"})
@@ -212,43 +215,42 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 	}
 
 	c.JSON(200, dto.PaginatedPastaDTO{
-		Status:       200,
-		NextObjectID: nextKey,
-		Pastas:       *result,
+		Status: 200,
+		Pastas: *result,
 	})
 }
 
-func (h *Handler) PaginateUserIdHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() PaginateUserIdHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
+// func (h *Handler) PaginateUserIdHandler(c *gin.Context) {
+// 	start := time.Now()
+// 	defer func() {
+// 		h.logger.Tracef("func() PaginateUserIdHandler. Execution time: %.2f", time.Since(start).Seconds())
+// 	}()
 
-	rawLimit := c.Query("limit")
-	startAfter := c.Query("starting")
+// 	rawLimit := c.Query("limit")
+// 	startAfter := c.Query("after")
 
-	ctx := c.Request.Context()
+// 	ctx := c.Request.Context()
 
-	userID, err := h.GetUserID(c)
-	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
+// 	userID, err := h.GetUserID(c)
+// 	if errors.Is(err, customerrors.ErrInternal) {
+// 		h.logger.Errorf("internal server error during getting userID from context: %v", err)
+// 		c.JSON(500, gin.H{"error": "internal server error"})
+// 		return
+// 	}
 
-	result, nextKey, err := h.servises.Pasta.Paginate(ctx, rawLimit, startAfter, &userID)
-	if err != nil {
-		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
-			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5."})
-		} else {
-			h.logger.Errorf("internal server error during paginating by ID: %v", err)
-			c.JSON(500, gin.H{"error": "internal error occured while paginating by id"})
-		}
-		return
-	}
-	c.JSON(200, dto.PaginatedPastaDTO{
-		Status:       200,
-		NextObjectID: nextKey,
-		Pastas:       *result,
-	})
-}
+// 	result, nextKey, err := h.servises.Pasta.Paginate(ctx, rawLimit, startAfter, &userID)
+// 	if err != nil {
+// 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
+// 			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5."})
+// 		} else {
+// 			h.logger.Errorf("internal server error during paginating by ID: %v", err)
+// 			c.JSON(500, gin.H{"error": "internal error occured while paginating by id"})
+// 		}
+// 		return
+// 	}
+// 	c.JSON(200, dto.PaginatedPastaDTO{
+// 		Status:       200,
+// 		NextObjectID: nextKey,
+// 		Pastas:       *result,
+// 	})
+// }

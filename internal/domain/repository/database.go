@@ -20,9 +20,13 @@ type AuthDatabase interface {
 type PastaDatabase interface {
 	Create(ctx context.Context, pasta *models.Pasta) error
 
+	GetHash(ctx context.Context, objectID string) (string, error)
 	GetKey(ctx context.Context, hash string) (string, error)
 	GetVisibility(ctx context.Context, hash string) (string, error)
+
 	GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error)
+	GetManyMetadata(ctx context.Context, objectID *[]string) (*[]models.Pasta, error)
+
 	GetPassword(ctx context.Context, hash string) (string, error)
 	GetKeys(ctx context.Context, userID int) ([]string, error)
 	GetKeysExpiredPasta(ctx context.Context) ([]string, error)
@@ -35,4 +39,6 @@ type PastaDatabase interface {
 	IsPastaExists(ctx context.Context, hash string) (bool, error)
 	IsPastaExistsByObjectID(ctx context.Context, objectID string) (bool, error)
 	IsAccessPrivate(ctx context.Context, userID int, hash string) (bool, error)
+
+	PaginateV1(ctx context.Context, limit, offset int) (*[]string, error)
 }

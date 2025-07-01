@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	domain "pastebin/internal/domain/repository"
 	"pastebin/internal/models"
+	"pastebin/pkg/dto"
 	"pastebin/pkg/workerpool"
 	"sort"
 	"sync"
@@ -62,23 +64,27 @@ func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword ma
 	return paste, nil
 }
 
-func (m *S3) Get(ctx context.Context, key string) (*string, error) {
+func (m *S3) Get(ctx context.Context, key string) (*string, *time.Time, error) {
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 
 	file, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error while getting URL for object %s: %w", key, err)
+		return nil, nil, fmt.Errorf("error while getting URL for object %s: %w", key, err)
 	}
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return nil, fmt.Errorf("error while reading file: %w", err)
+		return nil, nil, fmt.Errorf("error while reading file: %w", err)
 	}
 
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get stat of object: %w", err)
+	}
 	result := string(data)
-	return &result, nil
+	return &result, &stat.LastModified, nil
 }
 
 func (m *S3) Delete(ctx context.Context, key string) error {
@@ -96,12 +102,11 @@ func (m *S3) Delete(ctx context.Context, key string) error {
 	}
 	return nil
 }
-
-func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
+func (m *S3) GetFiles(ctx context.Context, keys []string) (*[]dto.Entry, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	dataCh := make(chan *string, len(keys))
+	dataCh := make(chan dto.Entry, len(keys))
 	errCh := make(chan error, len(keys))
 
 	handleError := func(err error) {
@@ -130,14 +135,18 @@ func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
 				return
 			}
 
-			data, err := m.Get(ctx, key)
+			data, lastModified, err := m.Get(ctx, key)
 			if err != nil {
 				handleError(err)
 				return
 			}
+			if data == nil || lastModified == nil {
+				handleError(fmt.Errorf("text or lastmodified is empty"))
+				return
+			}
 
 			select {
-			case dataCh <- data:
+			case dataCh <- dto.Entry{Text: *data, ObjectID: key, Time: *lastModified}:
 			case <-ctx.Done():
 				return
 			}
@@ -150,11 +159,11 @@ func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
 		close(errCh)
 	}()
 
-	var datas []string
+	var datas []dto.Entry
 	var errs []error
 
 	for data := range dataCh {
-		datas = append(datas, *data)
+		datas = append(datas, data)
 	}
 
 	for err := range errCh {
@@ -164,7 +173,11 @@ func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("error while getting objects: %v", errs)
 	}
-	return datas, nil
+
+	sort.Slice(datas, func(i, j int) bool {
+		return datas[i].Time.Before(datas[j].Time)
+	})
+	return &datas, nil
 }
 
 // func (m *S3) DeleteFiles(ctx context.Context, keys []string) error {
@@ -237,10 +250,15 @@ func (m *S3) PaginateFiles(ctx context.Context, limit int, startAfter, prefix st
 	}
 
 	opts := minio.ListObjectsOptions{
-		Recursive:  true,
-		Prefix:     prefix,
-		MaxKeys:    limit,
-		StartAfter: startAfter,
+		Recursive: true,
+		Prefix:    prefix,
+		MaxKeys:   limit,
+	}
+
+	log.Printf("StartAfter: %s", startAfter)
+
+	if startAfter != "" {
+		opts.StartAfter = startAfter
 	}
 
 	keys := []string{}
@@ -254,6 +272,8 @@ func (m *S3) PaginateFiles(ctx context.Context, limit int, startAfter, prefix st
 		if object.Err != nil {
 			return nil, "", fmt.Errorf("failed to list objects: %v", object.Err)
 		}
+
+		fmt.Printf("#%d: %s\n", i, object.Key)
 
 		objInfo, err := m.client.StatObject(ctx, m.bucket, object.Key, minio.StatObjectOptions{})
 		if err != nil {
@@ -273,12 +293,11 @@ func (m *S3) PaginateFiles(ctx context.Context, limit int, startAfter, prefix st
 		nextKey = keys[len(keys)-1]
 	}
 
-	pastas, err := m.GetFiles(ctx, keys)
+	_, err := m.GetFiles(ctx, keys)
 	if err != nil {
 		return nil, "", err
 	}
-
-	return &pastas, nextKey, nil
+	return nil, nextKey, nil
 }
 
 type keyInfo struct {
@@ -409,9 +428,13 @@ collectLoop:
 		nextKey = keys[len(keys)-1]
 	}
 
-	pastas, err := m.GetFiles(ctx, keys)
+	_, err := m.GetFiles(ctx, keys)
 	if err != nil {
 		return nil, "", err
 	}
-	return &pastas, nextKey, nil
+	return nil, nextKey, nil
+}
+
+func (m *S3) PaginateV1(ctx context.Context) error {
+	return nil
 }
