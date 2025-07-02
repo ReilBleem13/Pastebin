@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	domainrepo "pastebin/internal/domain/repository"
 	domainservice "pastebin/internal/domain/service"
 	customerrors "pastebin/internal/errors"
@@ -114,6 +113,15 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 		}
 	}()
 
+	// добавление первого просмотра
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := m.cache.Views(ctx, pastaMetadata.Hash); err != nil {
+			m.logger.Errorf("failed to add first view: %v", err)
+		}
+	}()
+
 	// индексирование текста
 	wg.Add(1)
 	go func() {
@@ -192,97 +200,6 @@ func (m *PastaService) Delete(ctx context.Context, hash string) error {
 // 	return m.client.DeleteFiles(ctx, objectIDs)
 // }
 
-func (m *PastaService) Paginate(ctx context.Context, rawLimit, startAfter string, userID *int) (*[]models.PastaPaginated, string, error) {
-	if userID != nil {
-		log.Printf("Входные данные. Limit: %s. StartAfter %s. UserID: %d: ", rawLimit, startAfter, *userID)
-	}
-	var limit int
-
-	if rawLimit == "" {
-		limit = defaultLimit
-	} else {
-		var err error
-		limit, err = strconv.Atoi(rawLimit)
-		if err != nil {
-			return nil, "", customerrors.ErrInvalidQueryParament
-		}
-		if limit < 5 {
-			limit = defaultLimit
-		}
-	}
-
-	var objectID string
-
-	if startAfter != "" {
-		var err error
-		exists, err := m.db.IsPastaExists(ctx, startAfter)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to check is pasta exists by objectID: %w", err)
-		}
-		if !exists {
-			return nil, "", customerrors.ErrPastaNotFound
-		}
-		objectID, err = m.db.GetKey(ctx, startAfter)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to get objectID")
-		}
-	}
-	prefix := visibilityIsPublic
-
-	log.Printf("ObjectID: %s", objectID)
-	if userID != nil {
-		prefix := fmt.Sprintf("%s:%d", userPrefix, *userID)
-		pastas, nextKey, err := m.s3.PaginateFilesByUserID(ctx, limit, objectID, prefix)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to paginate files by userID: %w", err)
-		}
-		///
-		var hash string
-		if nextKey != "" {
-			var err error
-			hash, err = m.db.GetHash(ctx, nextKey)
-			if err != nil {
-				return nil, "", err
-			}
-		}
-		///
-
-		responses := formResponse(pastas)
-		return responses, hash, nil
-	}
-	log.Println("Я пошел не туда куда нужно!")
-	pastas, nextKey, err := m.s3.PaginateFiles(ctx, limit, objectID, prefix)
-	if err != nil {
-		return nil, "", err
-	}
-
-	///
-	var hash string
-	if nextKey != "" {
-		var err error
-		hash, err = m.db.GetHash(ctx, nextKey)
-		if err != nil {
-			return nil, "", err
-		}
-	}
-	///
-	responses := formResponse(pastas)
-	return responses, hash, nil
-}
-
-func formResponse(pastas *[]string) *[]models.PastaPaginated {
-	responses := []models.PastaPaginated{}
-
-	for i, pasta := range *pastas {
-		response := models.PastaPaginated{
-			Number: i + 1,
-			Pasta:  pasta,
-		}
-		responses = append(responses, response)
-	}
-	return &responses
-}
-
 func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
 	text, err := m.cache.GetText(ctx, keyText)
 	if err == nil {
@@ -293,7 +210,7 @@ func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash stri
 		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
 	}
 
-	text, _, err = m.s3.Get(ctx, objectID)
+	text, _, err = m.s3.Get(ctx, objectID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file from minio: %w", err)
 	}
@@ -417,7 +334,7 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 	return &result, nil
 }
 
-func (m *PastaService) Paginate1(ctx context.Context, rawLimit, rawPage string, hasMetadata bool) (*[]dto.TextsWithMetadata, error) {
+func (m *PastaService) Paginate(ctx context.Context, rawLimit, rawPage string, hasMetadata bool, userID *int) (*[]dto.TextsWithMetadata, error) {
 	var limit, page int
 
 	if rawLimit == "" {
@@ -447,39 +364,52 @@ func (m *PastaService) Paginate1(ctx context.Context, rawLimit, rawPage string, 
 	}
 	offset := (page - 1) * limit
 
-	objectIDs, err := m.db.PaginateV1(ctx, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to paginate from db: %w", err)
+	var objectIDs *[]string
+	if userID != nil {
+		var err error
+		objectIDs, err = m.db.PaginateByUserID(ctx, limit, offset, *userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to paginate (byUserID) from db: %w", err)
+		}
+	} else {
+		var err error
+		objectIDs, err = m.db.Paginate(ctx, limit, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to paginate from db: %w", err)
+		}
 	}
 
 	if objectIDs == nil {
 		return nil, customerrors.ErrPastaNotFound
 	}
 
-	wg := &sync.WaitGroup{}
+	var (
+		metadatas *[]models.Pasta
+		texts     *[]dto.Entry
 
-	errMetaCh := make(chan error, 1)
-	metadatasCh := make(chan *[]models.Pasta, 1)
-
-	errTextsCh := make(chan error, 1)
-	textsCh := make(chan *[]dto.Entry, 1)
+		metaErr error
+		textErr error
+		wg      sync.WaitGroup
+	)
 
 	if hasMetadata {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			metadatas, err := m.db.GetManyMetadata(ctx, objectIDs)
-			if err != nil {
-				errMetaCh <- fmt.Errorf("failed to get metadatas from db: %w", err)
-				return
-			}
-
-			if metadatas != nil {
-				metadatasCh <- metadatas
-				return
+			if userID != nil {
+				metadatas, metaErr = m.db.GetManyMetadataByUserID(ctx, objectIDs, *userID)
+				if metaErr != nil {
+					metaErr = fmt.Errorf("failed to get metadata (userID): %w", metaErr)
+				} else if metadatas == nil {
+					metaErr = fmt.Errorf("metadatas are empty")
+				}
 			} else {
-				errMetaCh <- fmt.Errorf("metadatas are empty")
-				return
+				metadatas, metaErr = m.db.GetManyMetadataPublic(ctx, objectIDs)
+				if metaErr != nil {
+					metaErr = fmt.Errorf("failed to get metadata: %w", metaErr)
+				} else if metadatas == nil {
+					metaErr = fmt.Errorf("metadatas are empty")
+				}
 			}
 		}()
 	}
@@ -487,55 +417,140 @@ func (m *PastaService) Paginate1(ctx context.Context, rawLimit, rawPage string, 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		texts, err := m.s3.GetFiles(ctx, *objectIDs)
-		if err != nil {
-			errTextsCh <- fmt.Errorf("failed to get pastas from minio: %w", err)
-			return
-		}
-
-		if texts != nil {
-			textsCh <- texts
-			return
-		} else {
-			errTextsCh <- fmt.Errorf("texts are empty")
-			return
+		texts, textErr = m.s3.GetFiles(ctx, *objectIDs, prtBool(false))
+		if textErr != nil {
+			textErr = fmt.Errorf("failed to get pastas from minio: %w", textErr)
+		} else if texts == nil {
+			textErr = fmt.Errorf("texts are empty")
 		}
 	}()
 	wg.Wait()
 
-	var metadatas *[]models.Pasta
-	var texts *[]dto.Entry
-
 	if hasMetadata {
-		var errMeta, errTexts error
+		if metaErr != nil {
+			return nil, metaErr
+		}
+		if textErr != nil {
+			return nil, textErr
+		}
 
-		for i := 0; i < 2; i++ {
-			select {
-			case metadatas = <-metadatasCh:
-			case errMeta = <-errMetaCh:
-			case texts = <-textsCh:
-			case errTexts = <-errTextsCh:
+		for i := range *metadatas {
+			hash := (*metadatas)[i].Hash
+			views, err := m.cache.GetViews(ctx, hash)
+			if err != nil {
+				m.logger.Errorf("failed to get views for hash %s: %v", hash, err)
+				(*metadatas)[i].Views = -1
+				continue
 			}
+			viewsInt, err := strconv.Atoi(views)
+			if err != nil {
+				m.logger.Errorf("failed to convert string views to int for hash %s: %v", hash, err)
+				(*metadatas)[i].Views = -1
+				continue
+			}
+			(*metadatas)[i].Views = viewsInt
 		}
 
-		if errMeta != nil {
-			return nil, errMeta
-		}
-		if errTexts != nil {
-			return nil, errTexts
-		}
 	} else {
-		var errTexts error
-
-		select {
-		case texts = <-textsCh:
-		case errTexts = <-errTextsCh:
-		}
-
-		if errTexts != nil {
-			return nil, errTexts
+		if textErr != nil {
+			return nil, textErr
 		}
 	}
 	result := utils.MergeEntriesWithPasta(texts, metadatas)
 	return result, nil
 }
+
+func prtBool(b bool) *bool {
+	return &b
+}
+
+// func (m *PastaService) Paginate(ctx context.Context, rawLimit, startAfter string, userID *int) (*[]models.PastaPaginated, string, error) {
+// 	if userID != nil {
+// 		log.Printf("Входные данные. Limit: %s. StartAfter %s. UserID: %d: ", rawLimit, startAfter, *userID)
+// 	}
+// 	var limit int
+
+// 	if rawLimit == "" {
+// 		limit = defaultLimit
+// 	} else {
+// 		var err error
+// 		limit, err = strconv.Atoi(rawLimit)
+// 		if err != nil {
+// 			return nil, "", customerrors.ErrInvalidQueryParament
+// 		}
+// 		if limit < 5 {
+// 			limit = defaultLimit
+// 		}
+// 	}
+
+// 	var objectID string
+
+// 	if startAfter != "" {
+// 		var err error
+// 		exists, err := m.db.IsPastaExists(ctx, startAfter)
+// 		if err != nil {
+// 			return nil, "", fmt.Errorf("failed to check is pasta exists by objectID: %w", err)
+// 		}
+// 		if !exists {
+// 			return nil, "", customerrors.ErrPastaNotFound
+// 		}
+// 		objectID, err = m.db.GetKey(ctx, startAfter)
+// 		if err != nil {
+// 			return nil, "", fmt.Errorf("failed to get objectID")
+// 		}
+// 	}
+// 	prefix := visibilityIsPublic
+
+// 	log.Printf("ObjectID: %s", objectID)
+// 	if userID != nil {
+// 		prefix := fmt.Sprintf("%s:%d", userPrefix, *userID)
+// 		pastas, nextKey, err := m.s3.PaginateFilesByUserID(ctx, limit, objectID, prefix)
+// 		if err != nil {
+// 			return nil, "", fmt.Errorf("failed to paginate files by userID: %w", err)
+// 		}
+// 		///
+// 		var hash string
+// 		if nextKey != "" {
+// 			var err error
+// 			hash, err = m.db.GetHash(ctx, nextKey)
+// 			if err != nil {
+// 				return nil, "", err
+// 			}
+// 		}
+// 		///
+
+// 		responses := formResponse(pastas)
+// 		return responses, hash, nil
+// 	}
+// 	log.Println("Я пошел не туда куда нужно!")
+// 	pastas, nextKey, err := m.s3.PaginateFiles(ctx, limit, objectID, prefix)
+// 	if err != nil {
+// 		return nil, "", err
+// 	}
+
+// 	///
+// 	var hash string
+// 	if nextKey != "" {
+// 		var err error
+// 		hash, err = m.db.GetHash(ctx, nextKey)
+// 		if err != nil {
+// 			return nil, "", err
+// 		}
+// 	}
+// 	///
+// 	responses := formResponse(pastas)
+// 	return responses, hash, nil
+// }
+
+// func formResponse(pastas *[]string) *[]models.PastaPaginated {
+// 	responses := []models.PastaPaginated{}
+
+// 	for i, pasta := range *pastas {
+// 		response := models.PastaPaginated{
+// 			Number: i + 1,
+// 			Pasta:  pasta,
+// 		}
+// 		responses = append(responses, response)
+// 	}
+// 	return &responses
+// }

@@ -191,10 +191,11 @@ func (m *pastaDatabase) IsAccessPrivate(ctx context.Context, userID int, hash st
 	return exists, nil
 }
 
-func (m *pastaDatabase) PaginateV1(ctx context.Context, limit, offset int) (*[]string, error) {
+func (m *pastaDatabase) Paginate(ctx context.Context, limit, offset int) (*[]string, error) {
 	query := `
 		SELECT object_id 
 		FROM pastas 
+		WHERE object_id LIKE 'public:%'
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2`
 
@@ -207,14 +208,47 @@ func (m *pastaDatabase) PaginateV1(ctx context.Context, limit, offset int) (*[]s
 	return &objectIDs, nil
 }
 
-func (m *pastaDatabase) GetManyMetadata(ctx context.Context, objectID *[]string) (*[]models.Pasta, error) {
+func (m *pastaDatabase) PaginateByUserID(ctx context.Context, limit, offset, userID int) (*[]string, error) {
+	query := `
+		SELECT object_id 
+		FROM pastas 
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	var objectIDs []string
+	err := m.db.SelectContext(ctx, &objectIDs, query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("PaginateByUserID.pasta.go.db: ObjectIDS: %v", objectIDs)
+	return &objectIDs, nil
+}
+
+func (m *pastaDatabase) GetManyMetadataPublic(ctx context.Context, objectID *[]string) (*[]models.Pasta, error) {
 	var metadatas []models.Pasta
 
 	query := `
 		SELECT hash, object_id, user_id, size, language, visibility, views, created_at, expires_at 	
 		FROM pastas
-		WHERE object_id = ANY($1)
+		WHERE object_id = ANY($1) AND password_hash = ''
 	`
+
+	err := m.db.SelectContext(ctx, &metadatas, query, pq.Array(*objectID))
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("Длина слайса objectIDs: %d. Кол-во полученных паст: %d", len(*objectID), len(metadatas))
+	return &metadatas, nil
+}
+
+func (m *pastaDatabase) GetManyMetadataByUserID(ctx context.Context, objectID *[]string, userID int) (*[]models.Pasta, error) {
+	var metadatas []models.Pasta
+
+	query := `
+		SELECT hash, object_id, user_id, size, language, visibility, views, created_at, expires_at 	
+		FROM pastas
+		WHERE object_id = ANY($1)`
 
 	err := m.db.SelectContext(ctx, &metadatas, query, pq.Array(*objectID))
 	if err != nil {

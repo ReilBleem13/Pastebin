@@ -25,7 +25,8 @@ type PastaDatabase interface {
 	GetVisibility(ctx context.Context, hash string) (string, error)
 
 	GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error)
-	GetManyMetadata(ctx context.Context, objectID *[]string) (*[]models.Pasta, error)
+	GetManyMetadataPublic(ctx context.Context, objectID *[]string) (*[]models.Pasta, error)
+	GetManyMetadataByUserID(ctx context.Context, objectID *[]string, userID int) (*[]models.Pasta, error)
 
 	GetPassword(ctx context.Context, hash string) (string, error)
 	GetKeys(ctx context.Context, userID int) ([]string, error)
@@ -40,5 +41,6 @@ type PastaDatabase interface {
 	IsPastaExistsByObjectID(ctx context.Context, objectID string) (bool, error)
 	IsAccessPrivate(ctx context.Context, userID int, hash string) (bool, error)
 
-	PaginateV1(ctx context.Context, limit, offset int) (*[]string, error)
+	Paginate(ctx context.Context, limit, offset int) (*[]string, error)
+	PaginateByUserID(ctx context.Context, limit, offset, userID int) (*[]string, error)
 }

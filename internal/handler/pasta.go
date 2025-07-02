@@ -201,7 +201,7 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	result, err := h.servises.Pasta.Paginate1(ctx, rawLimit, rawPage, hasMetadata)
+	result, err := h.servises.Pasta.Paginate(ctx, rawLimit, rawPage, hasMetadata, nil)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
 			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5 and page more than 0."})
@@ -210,6 +210,48 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 		} else {
 			h.logger.Errorf("internal server error during paginating public: %v", err)
 			c.JSON(500, gin.H{"error": "internal error occured while paginating public"})
+		}
+		return
+	}
+
+	c.JSON(200, dto.PaginatedPastaDTO{
+		Status: 200,
+		Pastas: *result,
+	})
+}
+
+func (h *Handler) PaginateForUserHandler(c *gin.Context) {
+	start := time.Now()
+	defer func() {
+		h.logger.Tracef("func() PaginateForUserHandler. Execution time: %.2f", time.Since(start).Seconds())
+	}()
+
+	rawLimit := c.Query("limit")
+	rawPage := c.Query("page")
+
+	userID, err := h.GetUserID(c)
+	if errors.Is(err, customerrors.ErrInternal) {
+		h.logger.Errorf("internal server error during getting userID from context: %v", err)
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
+	hasMetadata, err := strconv.ParseBool(c.DefaultQuery("metadata", "false"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid 'metadata' query parameter, must be 'true' of 'false'"})
+		return
+	}
+	ctx := c.Request.Context()
+
+	result, err := h.servises.Pasta.Paginate(ctx, rawLimit, rawPage, hasMetadata, &userID)
+	if err != nil {
+		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
+			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5 and page more than 0."})
+		} else if errors.Is(err, customerrors.ErrPastaNotFound) {
+			c.JSON(200, gin.H{"status": "notes not found"})
+		} else {
+			h.logger.Errorf("internal server error during paginating by userID: %v", err)
+			c.JSON(500, gin.H{"error": "internal error occured while paginating by userID"})
 		}
 		return
 	}

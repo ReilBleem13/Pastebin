@@ -29,7 +29,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 
 		auth.GET("/receive/:objectID", h.AccessByKeyMiddleware(), h.GetPastaHandler)
 		auth.GET("/v1/paginate", h.PaginatePublicHandler)
-		// auth.GET("/v1/paginate/me", h.RequireAuth(), h.PaginateUserIdHandler)
+		auth.GET("/v1/paginate/me", h.RequireAuth(), h.PaginateForUserHandler)
 
 		auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
 	}

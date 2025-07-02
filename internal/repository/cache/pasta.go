@@ -39,6 +39,21 @@ func (r *pastaCache) Views(ctx context.Context, hash string) (int, error) {
 	return int(views), nil
 }
 
+func (r *pastaCache) GetViews(ctx context.Context, hash string) (string, error) {
+	keyViews := fmt.Sprintf("%s:%s", viewsPrefix, hash)
+	result, err := r.redis.Get(ctx, keyViews).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", customerrors.ErrKeyDoesntExist
+		} else {
+			return "", err
+		}
+	}
+	return result, nil
+}
+
+// функция получения просмотров с кеша
+
 func (r *pastaCache) AddText(ctx context.Context, hash string, text []byte) error {
 	return r.redis.Set(ctx, textPrefix+hash, text, textCacheTTL).Err()
 }
