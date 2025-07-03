@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -19,14 +20,20 @@ import (
 	_ "github.com/lib/pq"
 )
 
+const (
+	prodConfig string = "config.yml"
+)
+
 func main() {
 	logger := logging.GetLogger()
-	cfg := config.GetConfig()
+	cfg := config.GetConfig(prodConfig)
 
 	ctx := context.Background()
 
 	// инициализация postgres
-	postgres, err := database.NewPostgresDB(ctx, cfg.Storage)
+	dbURL := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
+		cfg.Storage.Host, cfg.Storage.Port, cfg.Storage.Username, cfg.Storage.Dbname, cfg.Storage.Password, cfg.Storage.Sslmode)
+	postgres, err := database.NewPostgresDB(ctx, dbURL)
 	if err != nil {
 		logger.Fatalf("failed to initialize postgres: %v", err)
 	}

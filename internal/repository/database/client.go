@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"pastebin/internal/config"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -18,14 +17,11 @@ type PostgresDB struct {
 	db *sqlx.DB
 }
 
-func NewPostgresDB(ctx context.Context, cfg config.StorageConfig) (*PostgresDB, error) {
-	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.Username, cfg.Dbname, cfg.Password, cfg.Sslmode)
-
+func NewPostgresDB(ctx context.Context, dbURL string) (*PostgresDB, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	db, err := sqlx.ConnectContext(ctx, "postgres", dsn)
+	db, err := sqlx.ConnectContext(ctx, "postgres", dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

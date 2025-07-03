@@ -47,7 +47,7 @@ type ElasticConfig struct {
 var instance *Config
 var once sync.Once
 
-func GetConfig() *Config {
+func GetConfig(filename string) *Config {
 	once.Do(func() {
 		logger := logging.GetLogger()
 		logger.Info("read application configuration")

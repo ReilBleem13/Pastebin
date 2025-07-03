@@ -10,6 +10,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// mockgen -source=logging.go -destination=../domain/mocks/logger/logging.go -package=mocks
+
+type LoggerInterface interface {
+	Tracef(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+}
+
 type writerHook struct {
 	Writer    []io.Writer
 	LogLevels []logrus.Level

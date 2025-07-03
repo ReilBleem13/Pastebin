@@ -90,6 +90,15 @@ func isPasswordNeed(isPassword *bool, objInfo *minio.ObjectInfo) bool {
 }
 
 // сделать аргумент, чтобы доставалось с паролей / без пароля / без разницы
+/*
+ obj, err := client.GetObject(ctx, bucket, objectName, minio.GetObjectOptions{})
+  if err != nil {
+      // Ошибка соединения или некорректные параметры, но не "объект не найден"
+  }
+  // Ошибка "объект не найден" появится только при чтении:
+  buf := make([]byte, 10)
+  _, err = obj.Read(buf)
+*/
 func (m *S3) Get(ctx context.Context, key string, password *bool) (*string, *time.Time, error) {
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()

@@ -7,15 +7,12 @@ import (
 	"time"
 )
 
+//go:generate mockgen -source=s3.go -destination=../mocks/repository/s3.go -package=mocks
+
 type S3 interface {
 	Store(ctx context.Context, owner string, data []byte, isPassword map[string]string) (*models.Pasta, error)
 	Get(ctx context.Context, key string, password *bool) (*string, *time.Time, error)
 	Delete(ctx context.Context, hash string) error
 
 	GetFiles(ctx context.Context, objectIDs []string, password *bool) (*[]dto.Entry, error)
-	// DeleteFile(ctx context.Context, objectID string) error
-	// DeleteFiles(ctx context.Context, objectIDs []string) error
-
-	// PaginateFiles(ctx context.Context, limit int, startAfter, prefix string) (*[]string, string, error)
-	// PaginateFilesByUserID(ctx context.Context, maxKeys int, startAfter, prefix string) (*[]string, string, error)
 }

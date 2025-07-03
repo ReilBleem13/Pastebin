@@ -5,6 +5,8 @@ import (
 	"pastebin/internal/models"
 )
 
+//go:generate mockgen -source=cache.go -destination=../mocks/repository/cache.go -package=mocks
+
 type Cache interface {
 	Pasta() PastaCache
 }

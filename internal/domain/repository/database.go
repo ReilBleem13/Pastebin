@@ -6,6 +6,8 @@ import (
 	"pastebin/pkg/dto"
 )
 
+//go:generate mockgen -source=database.go -destination=../mocks/repository/database.go -package=mocks
+
 type Database interface {
 	Auth() AuthDatabase
 	Pasta() PastaDatabase

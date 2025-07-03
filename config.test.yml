@@ -1,0 +1,25 @@
+listen:
+  port: 8081
+
+storage:
+  host: localhost
+  port: 5433
+  username: testuser
+  dbname: testdb
+  password: test
+  sslmode: disable
+
+minio:
+  host: localhost:9001
+  bucket: test
+  rootuser: minio
+  password: minio123
+  ssl: false
+
+redis:
+  host: localhost:6380
+
+elastic:
+  Addresses:
+    - localhost:9201
+  index: test

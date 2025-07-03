@@ -200,7 +200,6 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-
 	result, err := h.servises.Pasta.Paginate(ctx, rawLimit, rawPage, hasMetadata, nil)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
