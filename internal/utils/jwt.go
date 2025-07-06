@@ -61,3 +61,20 @@ func VerifyAccessToken(tokenString string) (*Claims, error) {
 	}
 	return nil, customerrors.ErrInvalidToken
 }
+
+func GenerateTestJWT(userID int) (string, error) {
+	accessClaims := Claims{
+		UserID: userID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   fmt.Sprintf("%d", userID),
+		},
+	}
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
+	accessTokenString, err := accessToken.SignedString([]byte(os.Getenv("JWT_KEY")))
+	if err != nil {
+		return "", err
+	}
+	return accessTokenString, nil
+}

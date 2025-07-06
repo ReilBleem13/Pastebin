@@ -16,6 +16,7 @@ import (
 	"pastebin/pkg/validate"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type PastaService struct {
@@ -56,7 +57,11 @@ func (p *PastaService) GetVisibility(ctx context.Context, hash string) (string, 
 }
 
 func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, userID int) (*models.Pasta, error) {
-	timeExpiration, err := validate.ValidRequestCreatePasta(req)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	timeNow := time.Now()
+	timeExpiration, err := validate.ValidRequestCreatePasta(req, timeNow)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +89,13 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 	}
 
 	data := []byte(req.Message)
-	pastaMetadata, err := m.s3.Store(ctx, prefix, data, options)
+
+	var pastaMetadata *models.Pasta
+	err = executeWithRetry(ctx, func() error {
+		var err error
+		pastaMetadata, err = m.s3.Store(ctx, prefix, data, options, timeNow)
+		return err
+	}, 3)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store pasta in S3: %w", err)
 	}
@@ -95,39 +106,79 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 	pastaMetadata.Visibility = req.Visibility
 	pastaMetadata.UserID = userID
 
-	// добавление метаданных в бд
-	if err := m.db.Create(ctx, pastaMetadata); err != nil {
-		// добавить удаление с minio + логировать если ошибка
-		return nil, fmt.Errorf("failed to create new pasta in database: %w", err)
+	err = executeWithRetry(ctx, func() error {
+		return m.db.Create(ctx, pastaMetadata)
+	}, 3)
+	if err != nil {
+		if deleteErr := m.s3.Delete(ctx, pastaMetadata.ObjectID); deleteErr != nil {
+			m.logger.Errorf("failed to cleanup S3 file after DB error: %v", deleteErr)
+		}
+		return nil, fmt.Errorf("failed to create new pasta in database : %v", err)
 	}
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, 2)
 
-	// кеширование текста
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := m.cache.AddText(ctx, pastaMetadata.Hash, data); err != nil {
-			errChan <- fmt.Errorf("failed to cache pasta after creation: %w", err)
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			err := executeWithRetry(ctx, func() error {
+				return m.cache.AddText(ctx, pastaMetadata.Hash, data)
+			}, 2)
+
+			if err != nil {
+				select {
+				case errChan <- fmt.Errorf("failed to cache pasta after creation: %v", err):
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
 	}()
 
-	// добавление первого просмотра
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if _, err := m.cache.Views(ctx, pastaMetadata.Hash); err != nil {
-			m.logger.Errorf("failed to add first view: %v", err)
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			err := executeWithRetry(ctx, func() error {
+				_, err := m.cache.Views(ctx, pastaMetadata.Hash)
+				return err
+			}, 2)
+
+			if err != nil {
+				m.logger.Errorf("failed to ad first view: %v", err)
+			}
 		}
 	}()
 
-	// индексирование текста
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := m.elastic.NewIndex(data, pastaMetadata.ObjectID, indexForElastic, nil); err != nil {
-			errChan <- fmt.Errorf("failed to index pasta after creation: %w", err)
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			err := executeWithRetry(ctx, func() error {
+				return m.elastic.NewIndex(data, pastaMetadata.ObjectID, indexForElastic, nil)
+			}, 2)
+
+			if err != nil {
+				select {
+				case errChan <- fmt.Errorf("failed to index pasta after creation: %w", err):
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
 	}()
 	wg.Wait()
@@ -179,6 +230,9 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 }
 
 func (m *PastaService) Delete(ctx context.Context, hash string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	key, err := m.db.DeleteMetadata(ctx, hash)
 	if err != nil {
 		if !errors.Is(err, customerrors.ErrPastaNotFound) {
@@ -186,8 +240,55 @@ func (m *PastaService) Delete(ctx context.Context, hash string) error {
 		}
 		return err
 	}
-	if err := m.s3.Delete(ctx, key); err != nil {
-		return fmt.Errorf("failed to delete file from S3: %w", err)
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, 1)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		select {
+		case <-ctx.Done(): //гарантирует, что функция не вызовется, если контекст отменен.
+			return
+		default:
+			err := executeWithRetry(ctx, func() error {
+				return m.s3.Delete(ctx, key)
+			}, 2)
+
+			if err != nil {
+				select {
+				case errChan <- fmt.Errorf("failed to delete file from S3: %w", err):
+				case <-ctx.Done(): // нужен только для безопасной отпарвки ошибки в канал.
+					return
+				}
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			err := executeWithRetry(ctx, func() error {
+				return m.cache.DeleteViews(ctx, hash)
+			}, 2)
+
+			if err != nil {
+				m.logger.Errorf("failed to delete views from hash %s: %v", hash, err)
+			}
+		}
+	}()
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -464,93 +565,30 @@ func prtBool(b bool) *bool {
 	return &b
 }
 
-// func (m *PastaService) Paginate(ctx context.Context, rawLimit, startAfter string, userID *int) (*[]models.PastaPaginated, string, error) {
-// 	if userID != nil {
-// 		log.Printf("Входные данные. Limit: %s. StartAfter %s. UserID: %d: ", rawLimit, startAfter, *userID)
-// 	}
-// 	var limit int
+func executeWithRetry(ctx context.Context, operation func() error, maxRetries int) error {
+	var lastErr error
 
-// 	if rawLimit == "" {
-// 		limit = defaultLimit
-// 	} else {
-// 		var err error
-// 		limit, err = strconv.Atoi(rawLimit)
-// 		if err != nil {
-// 			return nil, "", customerrors.ErrInvalidQueryParament
-// 		}
-// 		if limit < 5 {
-// 			limit = defaultLimit
-// 		}
-// 	}
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			if err := operation(); err == nil {
+				return nil
+			} else {
+				lastErr = err
 
-// 	var objectID string
+				if attempt < maxRetries-1 {
+					delay := time.Duration(attempt+1) * time.Second
 
-// 	if startAfter != "" {
-// 		var err error
-// 		exists, err := m.db.IsPastaExists(ctx, startAfter)
-// 		if err != nil {
-// 			return nil, "", fmt.Errorf("failed to check is pasta exists by objectID: %w", err)
-// 		}
-// 		if !exists {
-// 			return nil, "", customerrors.ErrPastaNotFound
-// 		}
-// 		objectID, err = m.db.GetKey(ctx, startAfter)
-// 		if err != nil {
-// 			return nil, "", fmt.Errorf("failed to get objectID")
-// 		}
-// 	}
-// 	prefix := visibilityIsPublic
-
-// 	log.Printf("ObjectID: %s", objectID)
-// 	if userID != nil {
-// 		prefix := fmt.Sprintf("%s:%d", userPrefix, *userID)
-// 		pastas, nextKey, err := m.s3.PaginateFilesByUserID(ctx, limit, objectID, prefix)
-// 		if err != nil {
-// 			return nil, "", fmt.Errorf("failed to paginate files by userID: %w", err)
-// 		}
-// 		///
-// 		var hash string
-// 		if nextKey != "" {
-// 			var err error
-// 			hash, err = m.db.GetHash(ctx, nextKey)
-// 			if err != nil {
-// 				return nil, "", err
-// 			}
-// 		}
-// 		///
-
-// 		responses := formResponse(pastas)
-// 		return responses, hash, nil
-// 	}
-// 	log.Println("Я пошел не туда куда нужно!")
-// 	pastas, nextKey, err := m.s3.PaginateFiles(ctx, limit, objectID, prefix)
-// 	if err != nil {
-// 		return nil, "", err
-// 	}
-
-// 	///
-// 	var hash string
-// 	if nextKey != "" {
-// 		var err error
-// 		hash, err = m.db.GetHash(ctx, nextKey)
-// 		if err != nil {
-// 			return nil, "", err
-// 		}
-// 	}
-// 	///
-// 	responses := formResponse(pastas)
-// 	return responses, hash, nil
-// }
-
-// func formResponse(pastas *[]string) *[]models.PastaPaginated {
-// 	responses := []models.PastaPaginated{}
-
-// 	for i, pasta := range *pastas {
-// 		response := models.PastaPaginated{
-// 			Number: i + 1,
-// 			Pasta:  pasta,
-// 		}
-// 		responses = append(responses, response)
-// 	}
-// 	return &responses
-// }
+					select {
+					case <-time.After(delay):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
+		}
+	}
+	return fmt.Errorf("failed after %d attemps, last error: %w", maxRetries, lastErr)
+}

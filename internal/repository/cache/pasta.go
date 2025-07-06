@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
@@ -26,7 +27,7 @@ const (
 
 	viewsPrefix string = "views"
 
-	textCacheTTL = 10 * time.Second // в конфиг
+	textCacheTTL = 60 * time.Second // в конфиг
 	metaCacheTTL = 60 * time.Second // в конфиг
 )
 
@@ -52,7 +53,16 @@ func (r *pastaCache) GetViews(ctx context.Context, hash string) (string, error) 
 	return result, nil
 }
 
-// функция получения просмотров с кеша
+func (r *pastaCache) DeleteViews(ctx context.Context, hash string) error {
+	keyViews := fmt.Sprintf("%s:%s", viewsPrefix, hash)
+	if err := r.redis.Del(ctx, keyViews).Err(); err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete key %s: %w", keyViews, err)
+	}
+	return nil
+}
 
 func (r *pastaCache) AddText(ctx context.Context, hash string, text []byte) error {
 	return r.redis.Set(ctx, textPrefix+hash, text, textCacheTTL).Err()

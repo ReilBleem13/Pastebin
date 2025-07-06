@@ -134,7 +134,6 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 	}()
 
 	var passwordRequest dto.Password
-
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.BindJSON(&passwordRequest); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})

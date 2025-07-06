@@ -37,7 +37,7 @@ const (
 	hasPassword   string = "Has_password"
 )
 
-func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword map[string]string) (*models.Pasta, error) {
+func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword map[string]string, timeNow time.Time) (*models.Pasta, error) {
 	objectID := owner + uuid.New().String() + ".txt"
 	content := bytes.NewReader(data)
 
@@ -57,7 +57,7 @@ func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword ma
 	}
 
 	paste := &models.Pasta{
-		CreatedAt: time.Now(),
+		CreatedAt: timeNow,
 		ObjectID:  objectID,
 		Size:      int(len(data)),
 	}

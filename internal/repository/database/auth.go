@@ -2,8 +2,10 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	domain "pastebin/internal/domain/repository"
+	customerrors "pastebin/internal/errors"
 	"pastebin/pkg/dto"
 
 	"github.com/jmoiron/sqlx"
@@ -34,6 +36,9 @@ func (a *authDatabase) GetHashPassword(ctx context.Context, email string) (strin
 	var hashPassword string
 	err := a.db.GetContext(ctx, &hashPassword, fmt.Sprintf("SELECT password_hash FROM %s WHERE email = $1", usersTables), email)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", customerrors.ErrUserNotFound
+		}
 		return "", err
 	}
 	return hashPassword, nil

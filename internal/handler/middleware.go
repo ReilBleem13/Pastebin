@@ -79,7 +79,7 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 			}
 			c.Set(requestCtx, req)
 
-			if req.Visibility == visibilityPrivate {
+			if strings.ToLower(req.Visibility) == visibilityPrivate {
 				_, exists := c.Get(userCtx)
 				if !exists {
 					c.JSON(401, gin.H{"error": "unathorized: create private pastas require login"})

@@ -1,62 +1,82 @@
 package handler
 
 import (
-	"context"
+	"errors"
+	customerrors "pastebin/internal/errors"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) SignUp(c *gin.Context) {
+	start := time.Now()
+	defer func() {
+		h.logger.Tracef("func() SignUp. Execution time: %.2f", time.Since(start).Seconds())
+	}()
+
 	var request dto.RequestNewUser
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	if err := c.BindJSON(&request); err != nil {
-		c.JSON(400, gin.H{
-			"error": err,
-		})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
 	hashPassword, err := utils.HashPassword(request.Password)
 	if err != nil {
-		c.JSON(400, gin.H{
-			"error": err,
-		})
+		h.logger.Errorf("internal server error during hashing password: %v", err)
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal})
 		return
 	}
+
 	request.Password = hashPassword
 	if err := h.servises.Authorization.CreateNewUser(ctx, &request); err != nil {
-		c.JSON(400, gin.H{
-			"error": err,
-		})
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 
-	c.JSON(201, gin.H{
-		"status": "created!",
+	c.JSON(201, dto.SuccessRegisterDTO{
+		Status:  201,
+		Message: "Successfully created",
 	})
 }
 
 func (h *Handler) SignIn(c *gin.Context) {
-	ctx := context.Background()
+	start := time.Now()
+	defer func() {
+		h.logger.Tracef("func() SignIn. Execution time: %.2f", time.Since(start).Seconds())
+	}()
+
+	ctx := c.Request.Context()
 	var request dto.LoginUser
+
 	if err := c.BindJSON(&request); err != nil {
-		c.JSON(400, gin.H{"error": err})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	if err := h.servises.Authorization.CheckLogin(ctx, &request); err != nil {
-		c.JSON(400, gin.H{"error": err})
-		return
-	}
-	accessToken, err := h.servises.Authorization.GenerateToken(ctx, &request)
-	if err != nil {
-		c.JSON(400, gin.H{"error": err})
+		if errors.Is(err, customerrors.ErrUserNotFound) {
+			c.JSON(404, gin.H{"error": "user not found"})
+		} else if errors.Is(err, customerrors.ErrWrongPassword) {
+			c.JSON(400, gin.H{"error": "wrong password"})
+		} else {
+			h.logger.Errorf("internal server error during authorizaton: %v", err)
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal})
+		}
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"status":      "loggined",
-		"accessToken": accessToken,
+	accessToken, err := h.servises.Authorization.GenerateToken(ctx, &request)
+	if err != nil {
+		h.logger.Errorf("internal server error during generating token: %v", err)
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal})
+		return
+	}
+	c.JSON(200, dto.SuccessLoginedDto{
+		Status:      200,
+		Message:     "Successfully logined",
+		AccessToken: accessToken,
 	})
 }

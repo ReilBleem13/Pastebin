@@ -22,10 +22,15 @@ var (
 
 	//middleware
 	ErrUserNotAuthenticated = errors.New("user is not authenticated")
-	ErrInternal             = errors.New("error on server")
+	ErrInternal             = errors.New("internal server error")
 
 	// jwt
 	ErrUnexpectedSignMethod = errors.New("unexpected signing method")
 	ErrTokenExpired         = errors.New("token expired")
 	ErrInvalidToken         = errors.New("token is invalid")
+
+	//user
+	ErrInvalidEmailFormat = errors.New("invalid email format")
+	ErrShortPassword      = errors.New("password is too short. Min lenght = 10")
+	ErrUserNotFound       = errors.New("user is not found")
 )

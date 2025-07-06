@@ -19,4 +19,5 @@ type PastaCache interface {
 
 	Views(ctx context.Context, hash string) (int, error)
 	GetViews(ctx context.Context, hash string) (string, error)
+	DeleteViews(ctx context.Context, hash string) error
 }

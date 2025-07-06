@@ -3,6 +3,7 @@ package validate
 import (
 	customerrors "pastebin/internal/errors"
 	"pastebin/pkg/dto"
+	"strings"
 	"time"
 )
 
@@ -31,12 +32,13 @@ func CheckContains(supported []string, elem string) bool {
 	return false
 }
 
-func ValidRequestCreatePasta(request *dto.RequestCreatePasta) (time.Time, error) {
+func ValidRequestCreatePasta(request *dto.RequestCreatePasta, timeNow time.Time) (time.Time, error) {
 	if request.Message == "" {
 		return time.Time{}, customerrors.ErrTextIsEmpty
 	}
 
 	if request.Language != "" {
+		request.Language = strings.ToLower(request.Language)
 		if !CheckContains(SupportedLanguages, request.Language) {
 			return time.Time{}, customerrors.ErrInvalidLanguageFormat
 		}
@@ -45,6 +47,7 @@ func ValidRequestCreatePasta(request *dto.RequestCreatePasta) (time.Time, error)
 	}
 
 	if request.Visibility != "" {
+		request.Visibility = strings.ToLower(request.Visibility)
 		if !CheckContains(SupportedVisibilities, request.Visibility) {
 			return time.Time{}, customerrors.ErrInvalidVisibilityFormat
 		}
@@ -55,13 +58,14 @@ func ValidRequestCreatePasta(request *dto.RequestCreatePasta) (time.Time, error)
 	var timeExpiration time.Time
 
 	if request.Expiration != "" {
+		request.Expiration = strings.ToLower(request.Expiration)
 		key, ok := SupportedTime[request.Expiration]
 		if !ok {
 			return time.Time{}, customerrors.ErrInvalidExpirationFormat
 		}
-		timeExpiration = time.Now().Add(time.Duration(key) * time.Millisecond)
+		timeExpiration = timeNow.Add(time.Duration(key) * time.Millisecond)
 	} else {
-		timeExpiration = time.Now().Add(time.Duration(SupportedTime[defaultExpiration]) * time.Millisecond)
+		timeExpiration = timeNow.Add(time.Duration(SupportedTime[defaultExpiration]) * time.Millisecond)
 	}
 	return timeExpiration, nil
 }
