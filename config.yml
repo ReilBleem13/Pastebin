@@ -20,6 +20,9 @@ redis:
   host: localhost:6379
 
 elastic:
-  Addresses:
-    - localhost:9200
+  addresses:
+    - http://localhost:9200
   index: pastas
+
+kafka:
+  address: localhost:9092

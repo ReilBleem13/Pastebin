@@ -6,6 +6,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+const (
+	usersTables  = "users"
+	pastasTables = "pastas"
+)
+
 type Database struct {
 	auth  domain.AuthDatabase
 	pasta domain.PastaDatabase

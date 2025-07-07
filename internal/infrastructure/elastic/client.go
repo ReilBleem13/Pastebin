@@ -1,4 +1,4 @@
-package elasticsearch
+package elastic
 
 import (
 	"bytes"
@@ -70,9 +70,4 @@ func (e *ElasticClient) EnsureIndex(index string) error {
 
 func (e *ElasticClient) Client() *elasticsearch.Client {
 	return e.client
-}
-
-func byteToString(text *[]byte) *string {
-	a := string(*text)
-	return &a
 }

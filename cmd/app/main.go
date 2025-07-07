@@ -8,11 +8,12 @@ import (
 	"os/signal"
 	"pastebin/internal/config"
 	"pastebin/internal/handler"
+	"pastebin/internal/infrastructure/elastic"
+	"pastebin/internal/infrastructure/kafka"
+	"pastebin/internal/infrastructure/minio"
+	"pastebin/internal/infrastructure/postgres"
+	"pastebin/internal/infrastructure/redis"
 	repostitory "pastebin/internal/repository"
-	"pastebin/internal/repository/cache"
-	"pastebin/internal/repository/database"
-	"pastebin/internal/repository/elasticsearch"
-	"pastebin/internal/repository/s3"
 	"pastebin/internal/service"
 	"pastebin/pkg/logging"
 	"syscall"
@@ -28,30 +29,28 @@ func main() {
 	logger := logging.GetLogger()
 	cfg := config.GetConfig(prodConfig)
 
-	ctx := context.Background()
-
 	// инициализация postgres
 	dbURL := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
 		cfg.Storage.Host, cfg.Storage.Port, cfg.Storage.Username, cfg.Storage.Dbname, cfg.Storage.Password, cfg.Storage.Sslmode)
-	postgres, err := database.NewPostgresDB(ctx, dbURL)
+	postgres, err := postgres.NewPostgresDB(context.TODO(), dbURL)
 	if err != nil {
 		logger.Fatalf("failed to initialize postgres: %v", err)
 	}
 
 	// инициализация minio
-	minio, err := s3.NewMinioClient(ctx, cfg.Minio, 10)
+	minio, err := minio.NewMinioClient(context.TODO(), cfg.Minio, 10)
 	if err != nil {
 		logger.Fatalf("failed to initialize minio: %v", err)
 	}
 
 	// инициализация redis
-	redis, err := cache.NewRedisClient(ctx, cfg.Redis)
+	redis, err := redis.NewRedisClient(context.TODO(), cfg.Redis)
 	if err != nil {
 		logger.Fatalf("failed to initialize redis: %v", err)
 	}
 
 	// инициализация elastic
-	elastic, err := elasticsearch.NewElasticClient(cfg.Elastic)
+	elastic, err := elastic.NewElasticClient(cfg.Elastic)
 	if err != nil {
 		logger.Fatalf("failed to initialize elasticsearch: %v", err)
 	}
@@ -59,11 +58,16 @@ func main() {
 		logger.Fatalf("failed to create elasticsearch index: %v", err)
 	}
 
+	producer, err := kafka.NewProducer(cfg.Kafka.Address)
+	if err != nil {
+		logger.Fatalf("failed to create producer: %v", err)
+	}
+
 	// инициализация repository
 	repo := repostitory.NewRepository(postgres.Client(), redis.Client(),
 		minio.Client(), elastic.Client(), minio.Pool(), cfg.Minio.Bucket)
 
-	services := service.NewService(repo, logger)
+	services := service.NewService(repo, producer, logger)
 	handlers := handler.NewHandler(services, logger)
 
 	srv := new(handler.Server)
@@ -84,7 +88,8 @@ func main() {
 	// зактрытие инфраструктуры
 	postgres.Close()
 	redis.Close()
-	minio.Close(ctx)
+	minio.Close(context.TODO())
+	producer.Close()
 
 	if err := srv.Shutdown(context.Background()); err != nil {
 		log.Fatalf("error occured on server shutting down: %s", err.Error())

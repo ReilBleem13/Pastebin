@@ -16,6 +16,7 @@ type Config struct {
 	Minio   MinioConfig   `yaml:"minio"`
 	Redis   RedisConfig   `yaml:"redis"`
 	Elastic ElasticConfig `yaml:"elastic"`
+	Kafka   KafkaConfig   `yaml:"kafka"`
 }
 
 type StorageConfig struct {
@@ -42,6 +43,10 @@ type RedisConfig struct {
 type ElasticConfig struct {
 	Addresses []string `yaml:"addresses"`
 	Index     string   `yaml:"index"`
+}
+
+type KafkaConfig struct {
+	Address string `yaml:"address"`
 }
 
 var instance *Config

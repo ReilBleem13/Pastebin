@@ -2,6 +2,7 @@ package service
 
 import (
 	domain "pastebin/internal/domain/service"
+	"pastebin/internal/infrastructure/kafka"
 	"pastebin/internal/repository"
 	"pastebin/pkg/logging"
 )
@@ -50,9 +51,9 @@ type Service struct {
 	// Cleanup
 }
 
-func NewService(repo *repository.Repository, logger *logging.Logger) *Service {
+func NewService(repo *repository.Repository, producer *kafka.Producer, logger *logging.Logger) *Service {
 	return &Service{
 		Authorization: NewAuthService(repo),
-		Pasta:         NewPastaService(repo, logger),
+		Pasta:         NewPastaService(repo, producer, logger),
 	}
 }

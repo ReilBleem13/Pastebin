@@ -24,37 +24,6 @@ type PastaDocument struct {
 	Tags    []string `json:"tags,omitempty"`
 }
 
-func (e *Elastic) NewIndex(text []byte, objectID, index string, tags []string) error {
-	doc := PastaDocument{
-		Content: string(text),
-		Tags:    tags,
-	}
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(doc); err != nil {
-		return fmt.Errorf("failed to encode document: %w", err)
-	}
-
-	// флаг true говорит эластику немедленно обновить индекс (высокая нагрузка) (e.client.Index.WithRefresh("true")))
-	res, err := e.client.Index(
-		index,
-		&buf,
-		e.client.Index.WithDocumentID(objectID))
-	if err != nil {
-		return fmt.Errorf("indexing request failed: %w", err)
-	}
-	defer res.Body.Close()
-
-	if res.IsError() {
-		var errMap map[string]interface{}
-		if err := json.NewDecoder(res.Body).Decode(&errMap); err != nil {
-			return fmt.Errorf("indexing error, status: %s", res.Status())
-		}
-		return fmt.Errorf("indexing error, status: %s, response: %v", res.Status(), errMap["error"])
-	}
-	return nil
-}
-
 func (e *Elastic) SearchWord(word, index string) ([]string, error) {
 	start := time.Now()
 

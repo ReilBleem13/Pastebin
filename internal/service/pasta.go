@@ -7,6 +7,7 @@ import (
 	domainrepo "pastebin/internal/domain/repository"
 	domainservice "pastebin/internal/domain/service"
 	customerrors "pastebin/internal/errors"
+	"pastebin/internal/infrastructure/kafka"
 	"pastebin/internal/models"
 	"pastebin/internal/repository"
 	"pastebin/internal/utils"
@@ -21,11 +22,12 @@ import (
 )
 
 type PastaService struct {
-	s3      domainrepo.S3
-	cache   domainrepo.PastaCache
-	db      domainrepo.PastaDatabase
-	elastic domainrepo.Elastic
-	logger  *logging.Logger
+	s3       domainrepo.S3
+	cache    domainrepo.PastaCache
+	db       domainrepo.PastaDatabase
+	elastic  domainrepo.Elastic
+	producer domainservice.AtLeastOnceProducer
+	logger   *logging.Logger
 }
 
 const (
@@ -43,13 +45,14 @@ const (
 	defaultPage  int = 1
 )
 
-func NewPastaService(repo *repository.Repository, logger *logging.Logger) domainservice.Pasta {
+func NewPastaService(repo *repository.Repository, producer *kafka.Producer, logger *logging.Logger) domainservice.Pasta {
 	return &PastaService{
-		s3:      repo.S3,
-		cache:   repo.Cache.Pasta(),
-		db:      repo.Database.Pasta(),
-		elastic: repo.Elastic,
-		logger:  logger,
+		s3:       repo.S3,
+		cache:    repo.Cache.Pasta(),
+		db:       repo.Database.Pasta(),
+		elastic:  repo.Elastic,
+		producer: producer,
+		logger:   logger,
 	}
 }
 
@@ -165,12 +168,13 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 		case <-ctx.Done():
 			return
 		default:
-			err := executeWithRetry(ctx, func() error {
-				return m.elastic.NewIndex(data, pastaMetadata.ObjectID, indexForElastic, nil)
-			}, 2) // ИЗМЕНИТЬ, ПОКА ХЗ КАК ЭТО РЕТРАИТЬ!
+			err := m.producer.Produce(ctx, kafka.TextIndexed{
+				ObjectID: pastaMetadata.ObjectID,
+				Index:    indexForElastic,
+			})
 
 			if err != nil {
-				m.logger.Errorf("failed to index pasta after creation: %v", err)
+				m.logger.Errorf("failed to produce test.indexed: %v", err)
 			}
 		}
 	}()

@@ -11,12 +11,12 @@ import (
 	"os"
 	"pastebin/internal/config"
 	"pastebin/internal/handler"
+	elasticClient "pastebin/internal/infrastructure/elastic"
+	minioClient "pastebin/internal/infrastructure/minio"
+	postgresClient "pastebin/internal/infrastructure/postgres"
+	redisClient "pastebin/internal/infrastructure/redis"
 	"pastebin/internal/models"
 	"pastebin/internal/repository"
-	"pastebin/internal/repository/cache"
-	"pastebin/internal/repository/database"
-	elastic "pastebin/internal/repository/elasticsearch"
-	"pastebin/internal/repository/s3"
 	"pastebin/internal/service"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
@@ -197,17 +197,17 @@ func SetupTestContainers() (*TestEnv, error) {
 func setupTestApp(env *TestEnv) (*TestApp, error) {
 	ctx := context.Background()
 
-	postgres, err := database.NewPostgresDB(ctx, env.PostgresURI)
+	postgres, err := postgresClient.NewPostgresDB(ctx, env.PostgresURI)
 	if err != nil {
 		return nil, err
 	}
 
-	redis, err := cache.NewRedisClient(ctx, config.RedisConfig{Host: env.RedisAddr})
+	redis, err := redisClient.NewRedisClient(ctx, config.RedisConfig{Host: env.RedisAddr})
 	if err != nil {
 		return nil, err
 	}
 
-	minio, err := s3.NewMinioClient(ctx, config.MinioConfig{
+	minio, err := minioClient.NewMinioClient(ctx, config.MinioConfig{
 		Host:     env.MinioEndpoint,
 		Bucket:   env.MinioBucket,
 		Rootuser: env.MinioRootUser,
@@ -218,7 +218,7 @@ func setupTestApp(env *TestEnv) (*TestApp, error) {
 		return nil, err
 	}
 
-	elastiCli, err := elastic.NewElasticClient(config.ElasticConfig{
+	elastiCli, err := elasticClient.NewElasticClient(config.ElasticConfig{
 		Addresses: env.ElasticURL,
 		Index:     env.ElasticIndex,
 	})
@@ -234,7 +234,7 @@ func setupTestApp(env *TestEnv) (*TestApp, error) {
 	repos := repository.NewRepository(postgres.Client(), redis.Client(), minio.Client(),
 		elastiCli.Client(), minio.Pool(), env.MinioBucket)
 	logger := logging.GetLogger()
-	services := service.NewService(repos, logger)
+	services := service.NewService(repos, nil, logger) // KAFKA УКАЗАНА КАК NIL. CURSOR! KAFKA УКАЗАНА КАК NIL!!!
 	h := handler.NewHandler(services, logger)
 
 	r := gin.Default()

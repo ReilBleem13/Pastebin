@@ -1,4 +1,4 @@
-package database
+package postgres
 
 import (
 	"context"
@@ -6,11 +6,6 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-)
-
-const (
-	usersTables  = "users"
-	pastasTables = "pastas"
 )
 
 type PostgresDB struct {
