@@ -211,11 +211,8 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 		}
 		return
 	}
-
-	c.JSON(200, dto.PaginatedPastaDTO{
-		Status: 200,
-		Pastas: *result,
-	})
+	result.Status = 200
+	c.JSON(200, result)
 }
 
 func (h *Handler) PaginateForUserHandler(c *gin.Context) {
@@ -254,43 +251,6 @@ func (h *Handler) PaginateForUserHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, dto.PaginatedPastaDTO{
-		Status: 200,
-		Pastas: *result,
-	})
+	result.Status = 200
+	c.JSON(200, result)
 }
-
-// func (h *Handler) PaginateUserIdHandler(c *gin.Context) {
-// 	start := time.Now()
-// 	defer func() {
-// 		h.logger.Tracef("func() PaginateUserIdHandler. Execution time: %.2f", time.Since(start).Seconds())
-// 	}()
-
-// 	rawLimit := c.Query("limit")
-// 	startAfter := c.Query("after")
-
-// 	ctx := c.Request.Context()
-
-// 	userID, err := h.GetUserID(c)
-// 	if errors.Is(err, customerrors.ErrInternal) {
-// 		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-// 		c.JSON(500, gin.H{"error": "internal server error"})
-// 		return
-// 	}
-
-// 	result, nextKey, err := h.servises.Pasta.Paginate(ctx, rawLimit, startAfter, &userID)
-// 	if err != nil {
-// 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
-// 			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5."})
-// 		} else {
-// 			h.logger.Errorf("internal server error during paginating by ID: %v", err)
-// 			c.JSON(500, gin.H{"error": "internal error occured while paginating by id"})
-// 		}
-// 		return
-// 	}
-// 	c.JSON(200, dto.PaginatedPastaDTO{
-// 		Status:       200,
-// 		NextObjectID: nextKey,
-// 		Pastas:       *result,
-// 	})
-// }

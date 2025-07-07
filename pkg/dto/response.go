@@ -31,6 +31,9 @@ type GetPastaResponse struct {
 type PaginatedPastaDTO struct {
 	Status int                 `json:"status"`
 	Pastas []TextsWithMetadata `json:"result"`
+	Page   int                 `json:"page"`
+	Limit  int                 `json:"limit"`
+	Total  int                 `json:"total"`
 }
 
 type Entry struct {

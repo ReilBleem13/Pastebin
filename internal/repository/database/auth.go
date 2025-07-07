@@ -3,12 +3,14 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
 	"pastebin/pkg/dto"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 type authDatabase struct {
@@ -27,7 +29,11 @@ func (a *authDatabase) CreateUser(ctx context.Context, user *dto.RequestNewUser)
 		user.Name, user.Email, user.Password)
 
 	if err != nil {
-		return err
+		var pgErr *pq.Error
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return customerrors.ErrUserAlreadyExist
+		}
+		return fmt.Errorf("failed to create user: %w", err)
 	}
 	return nil
 }
@@ -48,6 +54,9 @@ func (a *authDatabase) GetUserIDByEmail(ctx context.Context, email string) (int,
 	var userID int
 	err := a.db.GetContext(ctx, &userID, fmt.Sprintf("SELECT id FROM %s WHERE email = $1", usersTables), email)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, customerrors.ErrUserNotFound
+		}
 		return 0, err
 	}
 	return userID, nil

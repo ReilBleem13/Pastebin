@@ -33,4 +33,5 @@ var (
 	ErrInvalidEmailFormat = errors.New("invalid email format")
 	ErrShortPassword      = errors.New("password is too short. Min lenght = 10")
 	ErrUserNotFound       = errors.New("user is not found")
+	ErrUserAlreadyExist   = errors.New("user already exists")
 )

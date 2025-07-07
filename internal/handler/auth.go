@@ -20,20 +20,24 @@ func (h *Handler) SignUp(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	if err := c.BindJSON(&request); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(400, gin.H{"error": "bad request"})
 		return
 	}
 
 	hashPassword, err := utils.HashPassword(request.Password)
 	if err != nil {
 		h.logger.Errorf("internal server error during hashing password: %v", err)
-		c.JSON(500, gin.H{"error": customerrors.ErrInternal})
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
 	request.Password = hashPassword
 	if err := h.servises.Authorization.CreateNewUser(ctx, &request); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		if errors.Is(err, customerrors.ErrUserAlreadyExist) {
+			c.JSON(409, gin.H{"error": "user already exists"})
+		} else {
+			c.JSON(500, gin.H{"error": "internal server error"})
+		}
 		return
 	}
 
@@ -53,7 +57,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 	var request dto.LoginUser
 
 	if err := c.BindJSON(&request); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(400, gin.H{"error": "bad request"})
 		return
 	}
 	if err := h.servises.Authorization.CheckLogin(ctx, &request); err != nil {
@@ -63,7 +67,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 			c.JSON(400, gin.H{"error": "wrong password"})
 		} else {
 			h.logger.Errorf("internal server error during authorizaton: %v", err)
-			c.JSON(500, gin.H{"error": customerrors.ErrInternal})
+			c.JSON(500, gin.H{"error": "internal server error"})
 		}
 		return
 	}
@@ -71,7 +75,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 	accessToken, err := h.servises.Authorization.GenerateToken(ctx, &request)
 	if err != nil {
 		h.logger.Errorf("internal server error during generating token: %v", err)
-		c.JSON(500, gin.H{"error": customerrors.ErrInternal})
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, dto.SuccessLoginedDto{

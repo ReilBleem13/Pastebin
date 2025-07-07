@@ -9,7 +9,9 @@ import (
 	"pastebin/internal/repository"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
+	"pastebin/pkg/retry"
 	"strings"
+	"time"
 )
 
 type AuthService struct {
@@ -23,17 +25,31 @@ func NewAuthService(repo *repository.Repository) domainservice.Authorization {
 }
 
 func (a *AuthService) CreateNewUser(ctx context.Context, user *dto.RequestNewUser) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	if !strings.Contains(user.Email, "@") {
 		return customerrors.ErrInvalidEmailFormat
 	}
 	if len(user.Password) < 10 {
 		return customerrors.ErrShortPassword
 	}
-	return a.db.CreateUser(ctx, user)
+	err := retry.WithRetry(ctx, func() error {
+		return a.db.CreateUser(ctx, user)
+	}, retry.IsRetryableErrorDatabase)
+	return err
 }
 
 func (a *AuthService) CheckLogin(ctx context.Context, request *dto.LoginUser) error {
-	hashPassword, err := a.db.GetHashPassword(ctx, request.Email)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var hashPassword string
+	err := retry.WithRetry(ctx, func() error {
+		var err error
+		hashPassword, err = a.db.GetHashPassword(ctx, request.Email)
+		return err
+	}, retry.IsRetryableErrorDatabase)
 	if err != nil {
 		return fmt.Errorf("failed to get password_hash: %w", err)
 	}
@@ -45,7 +61,15 @@ func (a *AuthService) CheckLogin(ctx context.Context, request *dto.LoginUser) er
 }
 
 func (a *AuthService) GenerateToken(ctx context.Context, request *dto.LoginUser) (string, error) {
-	id, err := a.db.GetUserIDByEmail(ctx, request.Email)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var id int
+	err := retry.WithRetry(ctx, func() error {
+		var err error
+		id, err = a.db.GetUserIDByEmail(ctx, request.Email)
+		return err
+	}, retry.IsRetryableErrorDatabase)
 	if err != nil {
 		return "", fmt.Errorf("failed to get user id by email: %w", err)
 	}
