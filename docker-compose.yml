@@ -1,4 +1,57 @@
 services:
+
+  auth:
+    build:
+      context: ./authService
+      dockerfile: Dockerfile
+    ports:
+      - "10001:10001"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./authService/config.yml:/app/config.yml
+    networks:
+      - pastebin-net
+
+  pastas:
+    build:
+      context: ./pastaService
+      dockerfile: Dockerfile
+    ports:
+      - "10002:10002"
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./pastaService/config.yml:/app/config.yml
+    networks:
+      - pastebin-net
+
+  cleaner:
+    build:
+      context: ./cleanService
+      dockerfile: Dockerfile
+    ports:
+      - "10003:10003"
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./cleanService/config.yml:/app/config.yml
+    networks:
+      - pastebin-net
+
   minio:
     container_name: minio
     image: 'minio/minio:latest'
@@ -14,16 +67,12 @@ services:
       MINIO_ROOT_PASSWORD: "minio_password"
       MINIO_DEFAULT_BUCKETS: "chukki"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://minio:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
+    networks:
+      - pastebin-net
 
   db:
     container_name: postgres
@@ -37,17 +86,25 @@ services:
       TZ: Europe/Moscow
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - ./pgdata:/var/lib/postgresql/data/pgdata
+      - pgdata:/var/lib/postgresql/data/pgdata
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pastebin-net
 
-    
   redis:
     container_name: redis
     image: redis:latest
     ports:
       - "6379:6379"
     volumes:
-      - ./redisdata:/data
+      - redisdata:/data
+    networks:
+      - pastebin-net
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
@@ -61,28 +118,30 @@ services:
       - "9300:9300"
     volumes:
       - es-data:/usr/share/elasticsearch/data
-      
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://elasticsearch:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - pastebin-net
+
   kafka:
     image: apache/kafka-native
     ports:
       - "9092:9092"
     environment:
-      # Настройка listeners для связи с хостом и другими контейнерами
-      KAFKA_LISTENERS: CONTROLLER://localhost:9091,HOST://0.0.0.0:9092,DOCKER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:9093
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9091,HOST://0.0.0.0:9092,DOCKER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://kafka:9092,DOCKER://kafka:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,DOCKER:PLAINTEXT,HOST:PLAINTEXT
-
-      # Настройки для KRaft режима
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9091
-
-      # Listener для связи между брокерами
       KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
-
-      # Настройка для одноузлового кластера
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - pastebin-net
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -93,9 +152,16 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
     depends_on:
       - kafka
+    networks:
+      - pastebin-net
 
 volumes:
   minio_data:
   es-data:
   pgdata:
     driver: local
+  redisdata:
+
+networks: 
+  pastebin-net: 
+    driver: bridge

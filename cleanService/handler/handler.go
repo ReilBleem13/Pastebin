@@ -1,0 +1,68 @@
+package handler
+
+import (
+	elastic "cleanService/infrastucture/elasticsearch"
+	"cleanService/infrastucture/kafka"
+	s3 "cleanService/infrastucture/minio"
+	"cleanService/infrastucture/postgres"
+	logging "cleanService/utils/logger"
+	"cleanService/utils/retry"
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+type Handler struct {
+	s3      s3.Minio
+	elastic elastic.Elastic
+	db      postgres.Postgres
+	logger  *logging.Logger
+}
+
+func NewHandler(s3Client *s3.MinioClient, elasticClient *elastic.ElasticClient, postgresClient *postgres.PostgresClient,
+	logger *logging.Logger) *Handler {
+	return &Handler{
+		s3:      s3Client,
+		elastic: elasticClient,
+		db:      postgresClient,
+		logger:  logger,
+	}
+}
+
+func (h *Handler) DeleteExpiredPastas(rawMessage []byte) error {
+	var message kafka.CleanExpired
+	if err := json.Unmarshal(rawMessage, &message); err != nil {
+		return err
+	}
+
+	h.logger.Infof("Consumer got %d pastas for delete", len(message.ObjectIDs))
+
+	ctx := context.Background()
+
+	err := retry.WithRetry(ctx, func() error {
+		err := h.db.DeletePastas(ctx, message.ObjectIDs)
+		return err
+	}, retry.IsRetryableErrorDatabase)
+	if err != nil {
+		return fmt.Errorf("failed to delete from database: %w", err)
+	}
+
+	err = retry.WithRetry(ctx, func() error {
+		err := h.s3.Delete(ctx, message.ObjectIDs)
+		return err
+	}, retry.IsRetryableErrorMinio)
+	if err != nil {
+		return fmt.Errorf("failed to delete from s3: %w", err)
+	}
+
+	err = retry.WithRetry(ctx, func() error {
+		err := h.elastic.DeleteDocuments(ctx, message.ObjectIDs, message.Index)
+		return err
+	}, retry.IsRetryableErrorElastic)
+	if err != nil {
+		return fmt.Errorf("failed to delete from elastic: %w", err)
+	}
+
+	h.logger.Infof("Amount of %d pastas was deleted", len(message.ObjectIDs))
+	return nil
+}

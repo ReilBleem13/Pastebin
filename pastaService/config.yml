@@ -1,0 +1,28 @@
+listen:
+  port: 10002
+
+storage:
+  host: db
+  port: 5432
+  username: postgres
+  dbname: test
+  password: qwerty
+  sslmode: disable
+
+minio:
+  host: minio:9000
+  bucket: chukki
+  rootuser: root
+  password: minio_password
+  ssl: false
+
+redis:
+  host: redis:6379
+
+elastic:
+  addresses:
+    - http://elasticsearch:9200
+  index: pastas
+
+kafka:
+  address: kafka:9092

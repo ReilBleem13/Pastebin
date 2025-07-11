@@ -1,0 +1,10 @@
+listen:
+  port: 10001
+
+storage:
+  host: db
+  port: 5432
+  username: postgres
+  dbname: test
+  password: qwerty
+  sslmode: disable
