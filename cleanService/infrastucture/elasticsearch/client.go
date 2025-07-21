@@ -28,6 +28,10 @@ func NewElasticClient(address []string) (*ElasticClient, error) {
 }
 
 func (e *ElasticClient) DeleteDocuments(ctx context.Context, objectIDs []string, index string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	var buf bytes.Buffer
 	for _, id := range objectIDs {
 		meta := fmt.Sprintf(`{ "delete" : { "_index" : "%s", "_id" : "%s" } }`, index, id)

@@ -19,6 +19,8 @@ type Pasta interface {
 	Delete(ctx context.Context, hash string) error
 	Paginate(ctx context.Context, rawLimit, rawPage string, hasMetadata bool, userID *int) (*dto.PaginatedPastaDTO, error)
 	Search(ctx context.Context, word string) ([]string, error)
+	Update(ctx context.Context, newText []byte, hash string) (*models.Pasta, error)
 
-	GetVisibility(ctx context.Context, hash string) (string, error) // временно
+	GetVisibility(ctx context.Context, hash string) (string, error)
+	GetUserID(ctx context.Context, hash string) (int, error)
 }

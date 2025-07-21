@@ -94,23 +94,38 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 }
 
 func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
-	// временая логика бд
 	return func(c *gin.Context) {
-		hash := c.Param("objectID")
+		hash := c.Param("hash")
 		ctx := c.Request.Context()
 
 		visibility, err := h.servises.Pasta.GetVisibility(ctx, hash)
 		if err != nil {
 			if errors.Is(err, customerrors.ErrPastaNotFound) {
-				c.JSON(404, gin.H{"error": err.Error()})
+				c.JSON(404, gin.H{"error": "pasta not found"})
 			} else {
 				h.logger.Errorf("Internal error on GetVisibility: %v", err)
-				c.JSON(500, gin.H{"error": err.Error()})
+				c.JSON(500, gin.H{"error": "internal server error"})
 			}
 			c.Abort()
 			return
 		}
 		c.Set(visibilityCtx, visibility)
+		if c.Request.Method == http.MethodPut {
+			userID, err := h.servises.Pasta.GetUserID(ctx, hash)
+			if err != nil {
+				h.logger.Errorf("Internal error on GetVisibility: %v", err)
+				c.JSON(500, gin.H{"error": "internal server error"})
+				c.Abort()
+				return
+			}
+			if userID == 0 {
+				c.JSON(400, gin.H{"error": "should edit pastas from authorized user"})
+				c.Abort()
+				return
+			}
+			c.Next()
+			return
+		}
 
 		if visibility == visibilityPrivate {
 			_, exists := c.Get(userCtx)

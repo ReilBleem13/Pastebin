@@ -1,0 +1,1 @@
+  ALTER TABLE pastas ADD COLUMN expire_after_read boolean default false;

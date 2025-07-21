@@ -14,10 +14,12 @@ type Database interface {
 type PastaDatabase interface {
 	Create(ctx context.Context, pasta *models.Pasta) error
 
+	GetExpireAfterReadField(ctx context.Context, hash string) (bool, error)
 	GetHash(ctx context.Context, objectID string) (string, error)
 	GetPublicHashs(ctx context.Context, objectID []string) ([]string, error)
 	GetKey(ctx context.Context, hash string) (string, error)
 	GetVisibility(ctx context.Context, hash string) (string, error)
+	GetUserID(ctx context.Context, hash string) (int, error)
 
 	GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error)
 	GetManyMetadataPublic(ctx context.Context, objectID *[]string) (*[]models.Pasta, error)
@@ -38,6 +40,8 @@ type PastaDatabase interface {
 
 	Paginate(ctx context.Context, limit, offset int) (*[]string, error)
 	PaginateByUserID(ctx context.Context, limit, offset, userID int) (*[]string, error)
+
+	UpdateSizeAndReturnAll(ctx context.Context, hash string, size int) (*models.Pasta, error)
 }
 
 type ScannerDatabase interface {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	domain "pastebin/internal/domain/repository"
 	"pastebin/internal/models"
 	"pastebin/pkg/dto"
@@ -114,6 +115,20 @@ func (m *S3) Get(ctx context.Context, key string, password *bool) (*string, *tim
 		return &result, &stat.LastModified, nil
 	}
 	return nil, nil, nil
+}
+
+func (m *S3) Update(ctx context.Context, newText *bytes.Reader, objectID string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	uploadInfo, err := m.client.PutObject(ctx, m.bucket, objectID, newText, int64(newText.Size()), minio.PutObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to put new object: %w", err)
+	}
+
+	log.Printf("uploadInfo: %v", uploadInfo)
+	return nil
 }
 
 func (m *S3) Delete(ctx context.Context, key string) error {

@@ -60,8 +60,9 @@ func NewMinioClient(ctx context.Context, cfg config.MinioConfig, workers int) (*
 }
 
 func (m *MinioClient) Delete(ctx context.Context, keys []string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	var errs []error
 	for i := 0; i < len(keys); i += batchSize {
@@ -75,14 +76,24 @@ func (m *MinioClient) Delete(ctx context.Context, keys []string) error {
 		go func(batch []string) {
 			defer close(objectCh)
 			for _, key := range batch {
-				objectCh <- minio.ObjectInfo{Key: key}
+				select {
+				case objectCh <- minio.ObjectInfo{Key: key}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}(batch)
 
 		for rErr := range m.client.RemoveObjects(ctx, m.bucket, objectCh, minio.RemoveObjectsOptions{}) {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if rErr.Err != nil {
 				errs = append(errs, fmt.Errorf("error deleting %s: %w", rErr.ObjectName, rErr.Err))
 			}
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 	}
 	if len(errs) > 0 {

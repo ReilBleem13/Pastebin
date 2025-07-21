@@ -89,7 +89,9 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	hash := c.Param("objectID")
+	h.logger.Info("before hash")
+	hash := c.Param("hash")
+	h.logger.Infof("after hash: %s", hash)
 
 	hasMetadata, err := strconv.ParseBool(c.DefaultQuery("metadata", "false"))
 	if err != nil {
@@ -154,7 +156,7 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 		return
 	}
 
-	hash := c.Param("objectID")
+	hash := c.Param("hash")
 	ctx := c.Request.Context()
 
 	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
@@ -277,5 +279,62 @@ func (h *Handler) SearchHandler(c *gin.Context) {
 	c.JSON(200, dto.SearchedPastas{
 		Status: 200,
 		Pastas: result,
+	})
+}
+
+func (h *Handler) UpdateHandler(c *gin.Context) {
+	start := time.Now()
+	defer func() {
+		h.logger.Tracef("func() UpdateHandler. Execution time: %.2f", time.Since(start).Seconds())
+	}()
+
+	var updateRequest dto.UpdateRequest
+	if err := c.ShouldBindJSON(&updateRequest); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	visibility, err := h.GetVisibility(c)
+	if errors.Is(err, customerrors.ErrInternal) {
+		h.logger.Errorf("internal server error during getting visibility from context: %v", err)
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
+	userID, err := h.GetUserID(c)
+	if errors.Is(err, customerrors.ErrInternal) {
+		h.logger.Errorf("internal server error during getting userID from context: %v", err)
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
+	hash := c.Param("hash")
+
+	ctx := c.Request.Context()
+
+	err = h.servises.Pasta.Permission(ctx, hash, updateRequest.Password, visibility, userID)
+	if errors.Is(err, customerrors.ErrPastaNotFound) {
+		c.JSON(404, gin.H{"error": err.Error()})
+		return
+	} else if errors.Is(err, customerrors.ErrNoAccess) ||
+		errors.Is(err, customerrors.ErrWrongPassword) {
+		c.JSON(403, gin.H{"error": err.Error()})
+		return
+	} else if err != nil {
+		h.logger.Errorf("internal server error during checking permission: %v", err)
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
+	metadata, err := h.servises.Pasta.Update(ctx, []byte(updateRequest.NewText), hash)
+	if err != nil {
+		h.logger.Errorf("internal server error duting updating: %v", err)
+		c.JSON(500, gin.H{"error": "internal server error"})
+	}
+
+	c.JSON(200, dto.SuccessUpdatedPastaResponse{
+		Status:   200,
+		Message:  "Successfully updated",
+		Metadata: *metadata,
 	})
 }

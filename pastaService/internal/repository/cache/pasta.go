@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
 	"pastebin/internal/models"
@@ -32,19 +31,19 @@ const (
 	metaCacheTTL = 60 * time.Second // в конфиг
 )
 
-func (r *pastaCache) Views(ctx context.Context, hash string, expiration *time.Duration) (int, error) {
+func (r *pastaCache) CreateViews(ctx context.Context, hash string, expiration *time.Duration) error {
+	keyViews := fmt.Sprintf("%s:%s", viewsPrefix, hash)
+	if err := r.redis.Set(ctx, keyViews, 0, *expiration).Err(); err != nil {
+		return fmt.Errorf("failed to set views key: %w", err)
+	}
+	return nil
+}
+
+func (r *pastaCache) IncrViews(ctx context.Context, hash string) (int, error) {
 	keyViews := fmt.Sprintf("%s:%s", viewsPrefix, hash)
 	views, err := r.redis.Incr(ctx, keyViews).Result()
 	if err != nil {
 		return 0, fmt.Errorf("failed to incr views: %w", err)
-	}
-	log.Printf("Просмотры: %d", views)
-
-	if views == 1 {
-		err = r.redis.Expire(ctx, keyViews, *expiration).Err()
-		if err != nil {
-			return 0, fmt.Errorf("failed to set deadline: %w", err)
-		}
 	}
 	return int(views), nil
 }

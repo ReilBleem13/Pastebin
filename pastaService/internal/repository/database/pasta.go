@@ -24,8 +24,8 @@ func NewPastaDatabase(db *sqlx.DB) domain.PastaDatabase {
 
 func (m *pastaDatabase) Create(ctx context.Context, pasta *models.Pasta) error {
 	_, err := m.db.ExecContext(ctx, fmt.Sprintf(
-		"INSERT INTO %s (hash, object_id, user_id, size, language, visibility, password_hash, created_at, expires_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)", pastasTables),
-		pasta.Hash, pasta.ObjectID, pasta.UserID, pasta.Size, pasta.Language, pasta.Visibility, pasta.PasswordHash, pasta.CreatedAt, pasta.ExpiresAt)
+		"INSERT INTO %s (hash, object_id, user_id, size, language, visibility, password_hash, created_at, expires_at, expire_after_read) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", pastasTables),
+		pasta.Hash, pasta.ObjectID, pasta.UserID, pasta.Size, pasta.Language, pasta.Visibility, pasta.PasswordHash, pasta.CreatedAt, pasta.ExpiresAt, pasta.ExpireAfterRead)
 	if err != nil {
 		return err
 	}
@@ -53,11 +53,11 @@ func (m *pastaDatabase) GetVisibility(ctx context.Context, hash string) (string,
 	return visibility, nil
 }
 
-func (m *pastaDatabase) GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error) {
+func (m *pastaDatabase) GetMetadata(ctx context.Context, hash string) (*models.Pasta, error) {
 	pasta := models.Pasta{}
 	err := m.db.GetContext(ctx, &pasta, fmt.Sprintf(
-		`	SELECT hash, object_id, user_id, size, language, visibility, views, created_at, expires_at 
-			FROM %s WHERE object_id = $1`, pastasTables), objectID)
+		`	SELECT hash, object_id, user_id, size, language, visibility, views, created_at, expires_at, expire_after_read
+			FROM %s WHERE hash = $1`, pastasTables), hash)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,6 @@ func (m *pastaDatabase) GetPassword(ctx context.Context, hash string) (string, e
 
 func (m *pastaDatabase) GetHash(ctx context.Context, objectID string) (string, error) {
 	var hash string
-	log.Println(objectID)
 	err := m.db.GetContext(ctx, &hash, fmt.Sprintf("SELECT hash FROM %s WHERE object_id = $1", pastasTables), objectID)
 	if err != nil {
 		return "", err
@@ -89,9 +88,17 @@ func (m *pastaDatabase) GetHash(ctx context.Context, objectID string) (string, e
 	return hash, nil
 }
 
+func (m *pastaDatabase) GetUserID(ctx context.Context, hash string) (int, error) {
+	var userID int
+	err := m.db.GetContext(ctx, &userID, fmt.Sprintf("SELECT user_id FROM %s WHERE hash = $1", pastasTables), hash)
+	if err != nil {
+		return 0, err
+	}
+	return userID, nil
+}
+
 func (m *pastaDatabase) GetPublicHashs(ctx context.Context, objectID []string) ([]string, error) {
 	var hashs []string
-	log.Println(objectID)
 	err := m.db.SelectContext(ctx, &hashs, fmt.Sprintf("SELECT hash FROM %s WHERE object_id = ANY($1) AND visibility != 'private'", pastasTables), pq.Array(objectID))
 	if err != nil {
 		return nil, err
@@ -265,4 +272,55 @@ func (m *pastaDatabase) GetManyMetadataByUserID(ctx context.Context, objectID *[
 		return nil, err
 	}
 	return &metadatas, nil
+}
+
+func (m *pastaDatabase) GetExpireAfterReadField(ctx context.Context, hash string) (bool, error) {
+	var isExpireAfterRead bool
+
+	query := `
+		SELECT expire_after_read 
+		FROM pastas
+		WHERE hash = $1	
+	`
+
+	err := m.db.GetContext(ctx, &isExpireAfterRead, query, hash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, fmt.Errorf("error: %w, %v", customerrors.ErrPastaNotFound, err)
+		}
+		return false, err
+	}
+	return isExpireAfterRead, nil
+}
+
+func (m *pastaDatabase) UpdateSizeAndReturnAll(ctx context.Context, hash string, size int) (*models.Pasta, error) {
+	var metadata models.Pasta
+
+	tx, err := m.db.BeginTxx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		UPDATE pastas SET size = $1 WHERE hash = $2
+	`
+	_, err = tx.ExecContext(ctx, query, size, hash)
+	if err != nil {
+		return nil, err
+	}
+
+	query = `
+		SELECT hash, object_id, user_id, size, language, visibility, views, expire_after_read, created_at, expires_at
+		FROM pastas
+		WHERE hash = $1	
+	`
+	if err = tx.GetContext(ctx, &metadata, query, hash); err != nil {
+		return nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &metadata, nil
 }

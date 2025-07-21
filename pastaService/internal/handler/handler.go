@@ -27,12 +27,13 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	{
 		auth.POST("/create", h.AccessPostMiddleware(), h.CreatePastaHandler) // обработк ошибки при пустом json
 
-		auth.GET("/receive/:objectID", h.AccessByKeyMiddleware(), h.GetPastaHandler)
+		auth.GET("/receive/:hash", h.AccessByKeyMiddleware(), h.GetPastaHandler)
 		auth.GET("/v1/paginate", h.PaginatePublicHandler)
 		auth.GET("/v1/paginate/me", h.RequireAuth(), h.PaginateForUserHandler)
 		auth.GET("/search", h.SearchHandler)
 
-		auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
+		auth.PUT("/update/:hash", h.RequireAuth(), h.AccessByKeyMiddleware(), h.UpdateHandler)
+		auth.DELETE("/delete/:hash", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
 	}
 	return router
 }

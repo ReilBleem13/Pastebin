@@ -1,0 +1,1 @@
+  ALTER TABLE pastas DROP COLUMN expire_after_read;

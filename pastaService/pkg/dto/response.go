@@ -12,6 +12,12 @@ type SuccessCreatePastaResponse struct {
 	Metadata PastaMetadataDTO `json:"metadata,omitempty"`
 }
 
+type SuccessUpdatedPastaResponse struct {
+	Status   int          `json:"status"`
+	Message  string       `json:"message"`
+	Metadata models.Pasta `json:"metadata"`
+}
+
 type PastaMetadataDTO struct {
 	Key        string    `json:"key"`
 	Size       int       `json:"size"`

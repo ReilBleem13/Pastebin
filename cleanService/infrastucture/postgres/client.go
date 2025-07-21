@@ -31,6 +31,10 @@ func NewPostgresClient(ctx context.Context, dbURL string) (*PostgresClient, erro
 }
 
 func (p *PostgresClient) DeletePastas(ctx context.Context, objectIDs []string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
@@ -49,10 +53,15 @@ func (p *PostgresClient) DeletePastas(ctx context.Context, objectIDs []string) e
 	}
 
 	for i := 0; i < len(objectIDs); i += batchSize {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		end := i + batchSize
 		if end > len(objectIDs) {
 			end = len(objectIDs)
 		}
+
 		batch := objectIDs[i:end]
 		_, err := tx.ExecContext(ctx, "INSERT INTO tmp_delete_ids (id) SELECT unnest($1::text[])", pq.Array(batch))
 		if err != nil {

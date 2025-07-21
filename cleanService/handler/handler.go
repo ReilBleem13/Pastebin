@@ -9,7 +9,10 @@ import (
 	"cleanService/utils/retry"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
+	"time"
 )
 
 type Handler struct {
@@ -37,30 +40,62 @@ func (h *Handler) DeleteExpiredPastas(rawMessage []byte) error {
 
 	h.logger.Infof("Consumer got %d pastas for delete", len(message.ObjectIDs))
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	err := retry.WithRetry(ctx, func() error {
-		err := h.db.DeletePastas(ctx, message.ObjectIDs)
-		return err
-	}, retry.IsRetryableErrorDatabase)
-	if err != nil {
-		return fmt.Errorf("failed to delete from database: %w", err)
+	wg := &sync.WaitGroup{}
+	errCh := make(chan error, 3)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		err := retry.WithRetry(ctx, func() error {
+			err := h.db.DeletePastas(ctx, message.ObjectIDs)
+			return err
+		}, retry.IsRetryableErrorDatabase)
+		if err != nil {
+			errCh <- fmt.Errorf("failed to delete from database: %w", err)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		err := retry.WithRetry(ctx, func() error {
+			err := h.s3.Delete(ctx, message.ObjectIDs)
+			return err
+		}, retry.IsRetryableErrorMinio)
+		if err != nil {
+			errCh <- fmt.Errorf("failed to delete from s3: %w", err)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		err := retry.WithRetry(ctx, func() error {
+			err := h.elastic.DeleteDocuments(ctx, message.ObjectIDs, message.Index)
+			return err
+		}, retry.IsRetryableErrorElastic)
+		if err != nil {
+			errCh <- fmt.Errorf("failed to delete from elastic: %w", err)
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
 	}
 
-	err = retry.WithRetry(ctx, func() error {
-		err := h.s3.Delete(ctx, message.ObjectIDs)
-		return err
-	}, retry.IsRetryableErrorMinio)
-	if err != nil {
-		return fmt.Errorf("failed to delete from s3: %w", err)
-	}
-
-	err = retry.WithRetry(ctx, func() error {
-		err := h.elastic.DeleteDocuments(ctx, message.ObjectIDs, message.Index)
-		return err
-	}, retry.IsRetryableErrorElastic)
-	if err != nil {
-		return fmt.Errorf("failed to delete from elastic: %w", err)
+	if len(errs) > 0 {
+		return fmt.Errorf("some deletions failed: %w", errors.Join(errs...))
 	}
 
 	h.logger.Infof("Amount of %d pastas was deleted", len(message.ObjectIDs))
