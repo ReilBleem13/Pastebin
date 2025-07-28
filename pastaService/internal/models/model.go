@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"golang.org/x/net/context"
+)
 
 type User struct {
 	ID           int       `json:"id" db:"id"`
@@ -37,3 +41,5 @@ type PastaPaginated struct {
 	Number int    `json:"#"`
 	Pasta  string `json:"Pasta"`
 }
+
+type PaginateFunc func(ctx context.Context, limit int, offset int, userID int) ([]string, error)

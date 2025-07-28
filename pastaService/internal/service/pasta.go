@@ -33,8 +33,9 @@ const (
 	defaultNewFilePrefix string = "public:"
 	indexForElastic      string = "pastas"
 
-	visibilityIsPrivate string = "private"
-	visibilityIsPublic  string = "public"
+	link string = "localhost:10002/receive/"
+
+	privateVisibility string = "private"
 
 	textPrefix string = "text"
 	metaPrefix string = "meta"
@@ -66,12 +67,12 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	timeNow := time.Now()
 	expiration, err := validate.ValidRequestCreatePasta(req)
 	if err != nil {
 		return nil, err
 	}
 
+	timeNow := time.Now()
 	expiresAt := timeNow.Add(expiration)
 
 	var prefix string
@@ -81,29 +82,23 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 		prefix = defaultNewFilePrefix
 	}
 
-	options := map[string]string{
-		"has_password": "false",
-	}
-
+	options := map[string]string{"has_password": "false"}
 	var passwordHash string
 	if req.Password != "" {
-		options["has_password"] = "true"
-
-		var err error
 		passwordHash, err = utils.HashPassword(req.Password)
 		if err != nil {
 			return nil, fmt.Errorf("failed to hash password: %w", err)
 		}
+		options["has_password"] = "true"
 	}
 
 	data := []byte(req.Message)
-
 	var pastaMetadata *models.Pasta
-	err = retry.WithRetry(ctx, func() error {
-		var err error
-		pastaMetadata, err = m.s3.Store(ctx, prefix, data, options, timeNow)
-		return err
-	}, retry.IsRetryableErrorMinio)
+	err = retry.Retry(ctx, func() error {
+		var s3Err error
+		pastaMetadata, s3Err = m.s3.Store(ctx, prefix, data, options, timeNow)
+		return s3Err
+	}, retry.IsRetryableErrorMinio, retry.NewConfigWithComponent("s3"), m.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store pasta in S3: %w", err)
 	}
@@ -116,80 +111,38 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 	pastaMetadata.Visibility = req.Visibility
 	pastaMetadata.UserID = userID
 
-	err = retry.WithRetry(ctx, func() error {
+	err = retry.Retry(ctx, func() error {
 		return m.db.Create(ctx, pastaMetadata)
-	}, retry.IsRetryableErrorDatabase)
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 	if err != nil {
 		if deleteErr := m.s3.Delete(ctx, pastaMetadata.ObjectID); deleteErr != nil {
-			m.logger.Errorf("failed to cleanup S3 file after DB error: %v", deleteErr)
+			m.logger.Errorf("Failed to cleanup S3 file after DB error: %v, hash: %s", deleteErr, pastaMetadata.Hash)
 		}
-		return nil, fmt.Errorf("failed to create new pasta in database : %v", err)
+		return nil, fmt.Errorf("failed to create new pasta in database : %w", err)
 	}
 
-	var wg sync.WaitGroup
-	errChan := make(chan error, 1)
-
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
-
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			err := retry.WithRetry(ctx, func() error {
-				return m.cache.AddText(ctx, pastaMetadata.Hash, data)
-			}, retry.IsRetryableErrorRedis)
-
-			if err != nil {
-				m.logger.Errorf("failed to cache pasta after creation: %v", err)
-			}
+		if err := retry.Retry(ctx, func() error {
+			return m.cache.AddText(ctx, pastaMetadata.Hash, data)
+		}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger); err != nil {
+			m.logger.Errorf("Failed to cache pasta: %v, hash=%s", err, pastaMetadata.Hash)
 		}
 	}()
 
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
-
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			err := retry.WithRetry(ctx, func() error {
-				err := m.cache.CreateViews(ctx, pastaMetadata.Hash, &expiration)
-				return err
-			}, retry.IsRetryableErrorRedis)
-
-			if err != nil {
-				m.logger.Errorf("failed to ad first view: %v", err)
-			}
+		if err := retry.Retry(ctx, func() error {
+			err := m.cache.CreateViews(ctx, pastaMetadata.Hash, &expiration)
+			return err
+		}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger); err != nil {
+			m.logger.Errorf("Failed to add views: %v, hash=%s", err, pastaMetadata.Hash)
 		}
 	}()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			err := retry.WithRetry(ctx, func() error {
-				err := m.elastic.Indexing(data, pastaMetadata.ObjectID)
-				return err
-			}, retry.IsRetryableErrorElastic)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to index new text: %w", err)
-			}
-		}
-	}()
-	wg.Wait()
-	close(errChan)
-
-	for err := range errChan {
-		if err != nil {
-			return nil, fmt.Errorf("error in background pasta creation task: %v", err)
-		}
+	if err := retry.Retry(ctx, func() error {
+		err := m.elastic.Indexing(data, pastaMetadata.ObjectID)
+		return err
+	}, retry.IsRetryableErrorElastic, retry.NewConfigWithComponent("elastic"), m.logger); err != nil {
+		return nil, fmt.Errorf("failed to index pasta: %w", err)
 	}
 	return pastaMetadata, nil
 }
@@ -198,26 +151,26 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var pastaExists bool
-	err := retry.WithRetry(ctx, func() error {
+	var exists bool
+	err := retry.Retry(ctx, func() error {
 		var err error
-		pastaExists, err = m.db.IsPastaExists(ctx, hash)
+		exists, err = m.db.IsPastaExists(ctx, hash)
 		return err
-	}, retry.IsRetryableErrorDatabase)
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 	if err != nil {
 		return fmt.Errorf("failed to check is pasta exists: %w", err)
 	}
-	if !pastaExists {
+	if !exists {
 		return customerrors.ErrPastaNotFound
 	}
 
-	if visibility == visibilityIsPrivate {
+	if visibility == privateVisibility {
 		var hasAccess bool
-		err = retry.WithRetry(ctx, func() error {
+		err = retry.Retry(ctx, func() error {
 			var err error
 			hasAccess, err = m.db.IsAccessPrivate(ctx, userID, hash)
 			return err
-		}, retry.IsRetryableErrorDatabase)
+		}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 		if err != nil {
 			return fmt.Errorf("failed to check, accecc is private: %w", err)
 		}
@@ -227,21 +180,18 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 		return nil
 	}
 
-	var passwordHash string
-	err = retry.WithRetry(ctx, func() error {
+	var hashPassword string
+	err = retry.Retry(ctx, func() error {
 		var err error
-		passwordHash, err = m.db.GetPassword(ctx, hash)
+		hashPassword, err = m.db.GetPassword(ctx, hash)
 		return err
-	}, retry.IsRetryableErrorDatabase)
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 	if err != nil && !errors.Is(err, customerrors.ErrPasswordIsEmpty) {
 		return fmt.Errorf("failed to get password: %w", err)
 	}
 
-	if passwordHash != "" {
-		if !utils.CheckPasswordHash(password, passwordHash) {
-			return customerrors.ErrWrongPassword
-		}
-		return nil
+	if hashPassword != "" && !utils.CheckPasswordHash(password, hashPassword) {
+		return customerrors.ErrWrongPassword
 	}
 	return nil
 }
@@ -251,11 +201,11 @@ func (m *PastaService) Delete(ctx context.Context, hash string) error {
 	defer cancel()
 
 	var key string
-	err := retry.WithRetry(ctx, func() error {
+	err := retry.Retry(ctx, func() error {
 		var err error
 		key, err = m.db.DeleteMetadata(ctx, hash)
 		return err
-	}, retry.IsRetryableErrorDatabase)
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 	if err != nil {
 		if !errors.Is(err, customerrors.ErrPastaNotFound) {
 			return fmt.Errorf("failed to delete pasta from DB: %w", err)
@@ -270,129 +220,125 @@ func (m *PastaService) Delete(ctx context.Context, hash string) error {
 	go func() {
 		defer wg.Done()
 
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			err := retry.WithRetry(ctx, func() error {
-				return m.s3.Delete(ctx, key)
-			}, retry.IsRetryableErrorMinio)
-
-			if err != nil {
-				errChan <- fmt.Errorf("failed to delete file from S3: %w", err)
-			}
+		if err := retry.Retry(ctx, func() error {
+			return m.s3.Delete(ctx, key)
+		}, retry.IsRetryableErrorMinio, retry.NewConfigWithComponent("s3"), m.logger); err != nil {
+			errChan <- fmt.Errorf("failed to delete pasta from S3: %w", err)
 		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			err := retry.WithRetry(ctx, func() error {
-				err := m.elastic.DeleteDocument(ctx, key)
-				return err
-			}, retry.IsRetryableErrorElastic)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to delete from elastic: %w", err)
-			}
-		}
-	}()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			err := retry.WithRetry(ctx, func() error {
-				return m.cache.DeleteViews(ctx, hash)
-			}, retry.IsRetryableErrorRedis)
-
-			if err != nil {
-				m.logger.Errorf("failed to delete views from hash %s: %v", hash, err)
-			}
+		if err := retry.Retry(ctx, func() error {
+			err := m.elastic.DeleteDocument(ctx, key)
+			return err
+		}, retry.IsRetryableErrorElastic, retry.NewConfigWithComponent("elastic"), m.logger); err != nil {
+			errChan <- fmt.Errorf("failed to delete pasta from elastic: %w", err)
 		}
 	}()
 	wg.Wait()
 	close(errChan)
 
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		if err := retry.Retry(ctx, func() error {
+			return m.cache.DeleteViews(ctx, hash)
+		}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger); err != nil {
+			m.logger.Errorf("failed to delete views from hash %s: %v", hash, err)
+		}
+	}()
+
+	var errs []error
 	for err := range errChan {
 		if err != nil {
-			return err
+			errs = append(errs, err)
 		}
+	}
+
+	if len(errs) > 0 {
+		m.logger.Error("some delete steps failed", "errors:", errs)
+		return errs[0]
 	}
 	return nil
 }
 
-func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (*string, error) {
-	var text *string
-	err := retry.WithRetry(ctx, func() error {
+func (m *PastaService) GetText(ctx context.Context, keyText, objectID, hash string) (string, error) {
+	var text string
+
+	err := retry.Retry(ctx, func() error {
 		var err error
 		text, err = m.cache.GetText(ctx, keyText)
 		return err
-	}, retry.IsRetryableErrorRedis)
+	}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger)
 	if err == nil {
 		return text, nil
 	}
 
 	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
-		m.logger.Errorf("failed to get text from cache, falling back to S3: %v", err)
+		m.logger.Warnf("failed to get text from cache (fallback to s3): %v, hash: %s", err, hash)
 	}
 
-	err = retry.WithRetry(ctx, func() error {
-		text, _, err = m.s3.Get(ctx, objectID, nil)
+	err = retry.Retry(ctx, func() error {
+		text, err = m.s3.Get(ctx, objectID)
 		return err
-	}, retry.IsRetryableErrorMinio)
+	}, retry.IsRetryableErrorMinio, retry.NewConfigWithComponent("s3"), m.logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get file from minio: %w", err)
+		return "", fmt.Errorf("failed to get file from minio: %w", err)
 	}
 
-	err = retry.WithRetry(ctx, func() error {
-		return m.cache.AddText(ctx, hash, []byte(*text))
-	}, retry.IsRetryableErrorRedis)
-	if err != nil {
-		m.logger.Errorf("failed to add text to cache: %v", err)
-	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		err := retry.Retry(ctx, func() error {
+			return m.cache.AddText(ctx, hash, []byte(text))
+		}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger)
+		if err != nil {
+			m.logger.Errorf("failed to add text to cache: %v, hash: %s", err, hash)
+		}
+	}()
 	return text, nil
 }
 
 func (m *PastaService) GetMetadata(ctx context.Context, keyMeta string, hash string) (*models.Pasta, error) {
 	var metadata *models.Pasta
-	err := retry.WithRetry(ctx, func() error {
+	err := retry.Retry(ctx, func() error {
 		var err error
 		metadata, err = m.cache.GetMeta(ctx, keyMeta)
 		return err
-	}, retry.IsRetryableErrorRedis)
+	}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger)
 	if err == nil {
 		return metadata, err
 	}
 
 	if !errors.Is(err, customerrors.ErrKeyDoesntExist) {
-		m.logger.Errorf("failed to get metadata from cache, falling back to DB: %v", err)
+		m.logger.Warnf("failed to get metadata from cache (falling back to DB): %v, hash: %s", err, hash)
 	}
 
-	err = retry.WithRetry(ctx, func() error {
+	err = retry.Retry(ctx, func() error {
 		metadata, err = m.db.GetMetadata(ctx, hash)
 		return err
-	}, retry.IsRetryableErrorDatabase)
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 	if err != nil {
 		return nil, err
 	}
 
-	err = retry.WithRetry(ctx, func() error {
-		return m.cache.AddMeta(ctx, metadata)
-	}, retry.IsRetryableErrorRedis)
-	if err != nil {
-		m.logger.Errorf("error in add metadata to cache: %v", err)
-	}
+	go func() {
+		err = retry.Retry(ctx, func() error {
+			return m.cache.AddMeta(ctx, metadata)
+		}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger)
+		if err != nil {
+			m.logger.Errorf("failed to add metadata to cache: %v, hash: %s", err, hash)
+		}
+	}()
 	return metadata, nil
 }
 
-func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error) {
+func (m *PastaService) Get(ctx context.Context, hash string, withMetadata bool) (*models.PastaWithData, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -401,11 +347,11 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 	var views int
 
 	var objectID string
-	err := retry.WithRetry(ctx, func() error {
+	err := retry.Retry(ctx, func() error {
 		var err error
 		objectID, err = m.db.GetKey(ctx, hash)
 		return err
-	}, retry.IsRetryableErrorDatabase)
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get objectID: %w", err)
 	}
@@ -418,17 +364,17 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 		return nil, err
 	}
 
-	err = retry.WithRetry(ctx, func() error {
+	err = retry.Retry(ctx, func() error {
 		views, err = m.cache.IncrViews(ctx, hash)
 		return err
-	}, retry.IsRetryableErrorRedis)
+	}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger)
 	if err != nil {
 		m.logger.Errorf("failed to increment views for pasta %s: %v", hash, err)
 		views = -1
 	}
 
-	result.Text = *text
-	if flag {
+	result.Text = text
+	if withMetadata {
 		var err error
 		metadata, err = m.GetMetadata(ctx, keyMeta, hash)
 		if err != nil {
@@ -440,46 +386,189 @@ func (m *PastaService) Get(ctx context.Context, hash string, flag bool) (*models
 	}
 
 	go func() {
-		var isExpireAfterRead bool
-		var err error
-
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
+		var isExpireAfterRead bool
+		var err error
 
 		if metadata != nil {
 			isExpireAfterRead = metadata.ExpireAfterRead
 		} else {
-			err = retry.WithRetry(ctx, func() error {
+			err = retry.Retry(ctx, func() error {
 				var err error
 				isExpireAfterRead, err = m.db.GetExpireAfterReadField(ctx, hash)
 				return err
-			}, retry.IsRetryableErrorDatabase)
+			}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 			if err != nil {
-				m.logger.Errorf("failed to expire after read field), %v", err)
+				m.logger.Errorf("failed to expire-after-read flag for hash=%s: %v", hash, err)
+				return
 			}
 		}
 
 		if isExpireAfterRead {
 			m.logger.Info("(expire after read) deleting...")
 			if err = m.Delete(ctx, hash); err != nil {
-				m.logger.Errorf("failed to delete after read, %v", err)
+				m.logger.Errorf("failed to delete pasta after read fro hash=%s: %v", hash, err)
 			}
 		}
 	}()
 	return &result, nil
 }
 
-func (m *PastaService) Paginate(ctx context.Context, rawLimit, rawPage string, hasMetadata bool, userID *int) (*dto.PaginatedPastaDTO, error) {
+func (m *PastaService) Search(ctx context.Context, word string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var limit, page int
-
-	if rawLimit == "" {
-		limit = defaultLimit
-	} else {
+	var objectIDs []string
+	err := retry.Retry(ctx, func() error {
 		var err error
-		limit, err = strconv.Atoi(rawLimit)
+		objectIDs, err = m.elastic.SearchWord(word)
+		return err
+	}, retry.IsRetryableErrorElastic, retry.NewConfigWithComponent("elastic"), m.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search word: %w", err)
+	}
+
+	if len(objectIDs) == 0 {
+		return []string{}, customerrors.ErrEmptySearchResult
+	}
+
+	var hashes []string
+	err = retry.Retry(ctx, func() error {
+		hashes, err = m.db.GetPublicHashs(ctx, objectIDs)
+		return err
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get hashs from db: %w", err)
+	}
+
+	for i := range hashes {
+		hashes[i] = link + hashes[i]
+	}
+	return hashes, nil
+}
+
+func (m *PastaService) Update(ctx context.Context, newText []byte, hash string) (*models.Pasta, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var objectID string
+	err := retry.Retry(ctx, func() error {
+		var err error
+		objectID, err = m.db.GetKey(ctx, hash)
+		return err
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get objectID from db: %w, hash=%s", err, hash)
+	}
+
+	newTextBytes := bytes.NewReader(newText)
+
+	err = retry.Retry(ctx, func() error {
+		return m.s3.Update(ctx, newTextBytes, objectID)
+	}, retry.IsRetryableErrorMinio, retry.NewConfigWithComponent("s3"), m.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update s3 value: %w, hash=%s", err, hash)
+	}
+
+	var metadata *models.Pasta
+	err = retry.Retry(ctx, func() error {
+		metadata, err = m.db.UpdateSizeAndReturnAll(ctx, hash, int(newTextBytes.Size()))
+		return err
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update db: %w, hash=%s", err, hash)
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err := retry.Retry(ctx, func() error {
+			return m.cache.AddText(ctx, hash, newText)
+		}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger)
+		if err != nil {
+			m.logger.Errorf("failed to set new text to cache: %v, hash=%s", err, hash)
+		}
+	}()
+	return metadata, nil
+}
+
+func (m *PastaService) Favorite(ctx context.Context, hash, visibility string, userID int) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if visibility == privateVisibility {
+		return customerrors.ErrNotAllowed
+	}
+
+	var exists bool
+	err := retry.Retry(ctx, func() error {
+		var err error
+		exists, err = m.db.IsPastaExists(ctx, hash)
+		return err
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
+	if err != nil {
+		return fmt.Errorf("failed check is pasta exists: %w, hash=%s", err, hash)
+	}
+
+	if !exists {
+		return customerrors.ErrPastaNotFound
+	}
+	return m.db.Favorite(ctx, hash, userID)
+}
+
+func (m *PastaService) GetFavorite(ctx context.Context, userID, favoriteID int, withMetadata bool) (*models.PastaWithData, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var hash string
+	err := retry.Retry(ctx, func() error {
+		var err error
+		hash, err = m.db.GetFavoriteAndCheckUser(ctx, userID, favoriteID)
+		return err
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get favorite and check user: %w", err)
+	}
+
+	pasta, err := m.Get(ctx, hash, withMetadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pasta: %w, hash=%s", err, hash)
+	}
+	return pasta, nil
+}
+
+func (m *PastaService) DeleteFavorite(ctx context.Context, userID, favoriteID int) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	err := retry.Retry(ctx, func() error {
+		return m.db.DeleteFavorite(ctx, userID, favoriteID)
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
+	if err != nil {
+		return fmt.Errorf("failed to delete favorite: %w", err)
+	}
+	return nil
+}
+
+func (m *PastaService) Paginate(
+	ctx context.Context, rawLimit, rawPage string, userID int,
+	hasMetadata bool, paginateFn models.PaginateFunc,
+) (*dto.PaginatedPastaDTO, error) {
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var (
+		limit = defaultLimit
+		page  = defaultPage
+		err   error
+	)
+
+	if rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
 		if err != nil {
 			return nil, customerrors.ErrInvalidQueryParament
 		}
@@ -488,10 +577,7 @@ func (m *PastaService) Paginate(ctx context.Context, rawLimit, rawPage string, h
 		}
 	}
 
-	if rawPage == "" {
-		page = defaultPage
-	} else {
-		var err error
+	if rawPage != "" {
 		page, err = strconv.Atoi(rawPage)
 		if err != nil {
 			return nil, customerrors.ErrInvalidQueryParament
@@ -502,203 +588,123 @@ func (m *PastaService) Paginate(ctx context.Context, rawLimit, rawPage string, h
 	}
 	offset := (page - 1) * limit
 
-	var objectIDs *[]string
-	if userID != nil {
-		var err error
-		retry.WithRetry(ctx, func() error {
-			objectIDs, err = m.db.PaginateByUserID(ctx, limit, offset, *userID)
-			return err
-		}, retry.IsRetryableErrorDatabase)
-		if err != nil {
-			return nil, fmt.Errorf("failed to paginate (byUserID) from db: %w", err)
-		}
-	} else {
-		var err error
-		retry.WithRetry(ctx, func() error {
-			objectIDs, err = m.db.Paginate(ctx, limit, offset)
-			return err
-		}, retry.IsRetryableErrorDatabase)
-		if err != nil {
-			return nil, fmt.Errorf("failed to paginate from db: %w", err)
-		}
+	var objectIDs []string
+	if err := retry.Retry(ctx, func() error {
+		objectIDs, err = paginateFn(ctx, limit, offset, userID)
+		return err
+	}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger); err != nil {
+		return nil, fmt.Errorf("failed to get object ids from db: %w", err)
 	}
 
 	if objectIDs == nil {
 		return nil, customerrors.ErrPastaNotFound
 	}
 
-	var (
-		metadatas *[]models.Pasta
-		texts     *[]dto.Entry
+	texts := make([]string, 0, len(objectIDs))
+	metadatas := make([]models.Pasta, len(objectIDs))
 
-		metaErr error
-		textErr error
-		wg      sync.WaitGroup
-	)
+	var metaErr error
 
+	wg := &sync.WaitGroup{}
 	if hasMetadata {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if userID != nil {
-				metaErr = retry.WithRetry(ctx, func() error {
-					metadatas, metaErr = m.db.GetManyMetadataByUserID(ctx, objectIDs, *userID)
-					return metaErr
-				}, retry.IsRetryableErrorDatabase)
 
-				if metaErr != nil {
-					metaErr = fmt.Errorf("failed to get metadata (userID): %w", metaErr)
-				} else if metadatas == nil {
-					metaErr = fmt.Errorf("metadatas are empty")
-				}
-			} else {
-				metaErr = retry.WithRetry(ctx, func() error {
-					metadatas, metaErr = m.db.GetManyMetadataPublic(ctx, objectIDs)
-					return metaErr
-				}, retry.IsRetryableErrorDatabase)
-
-				if metaErr != nil {
-					metaErr = fmt.Errorf("failed to get metadata: %w", metaErr)
-				} else if metadatas == nil {
-					metaErr = fmt.Errorf("metadatas are empty")
-				}
+			var err error
+			metadatas, err = func() ([]models.Pasta, error) {
+				var rawMetadatas []models.Pasta
+				err := retry.Retry(ctx, func() error {
+					var innerErr error
+					rawMetadatas, innerErr = m.db.GetManyMetadata(ctx, objectIDs)
+					return innerErr
+				}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
+				return rawMetadatas, err
+			}()
+			if err != nil {
+				metaErr = err
+				return
 			}
+
+			for i := range metadatas {
+				viewsStr := ""
+				err := retry.Retry(ctx, func() error {
+					var innerErr error
+					viewsStr, innerErr = m.cache.GetViews(ctx, metadatas[i].Hash)
+					return innerErr
+				}, retry.IsRetryableErrorRedis, retry.NewConfigWithComponent("cache"), m.logger)
+
+				if err != nil {
+					m.logger.Errorf("failed to get views for hash=%s: %v", metadatas[i].Hash, err)
+					metadatas[i].Views = -1
+					continue
+				}
+
+				viewsInt, err := strconv.Atoi(viewsStr)
+				if err != nil {
+					m.logger.Errorf("failed to convert string views to int for hash=%s: %v", metadatas[i].Hash, err)
+					metadatas[i].Views = -1
+					continue
+				}
+				metadatas[i].Views = viewsInt
+			}
+
 		}()
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		textErr = retry.WithRetry(ctx, func() error {
-			texts, textErr = m.s3.GetFiles(ctx, *objectIDs, prtBool(false))
-			return textErr
-		}, retry.IsRetryableErrorMinio)
-		if textErr != nil {
-			textErr = fmt.Errorf("failed to get pastas from minio: %w", textErr)
-		} else if texts == nil {
-			textErr = fmt.Errorf("texts are empty")
-		}
-	}()
+	if err := retry.Retry(ctx, func() error {
+		var err error
+		texts, err = m.s3.GetFiles(ctx, objectIDs)
+		return err
+	}, retry.IsRetryableErrorMinio, retry.NewConfigWithComponent("s3"), m.logger); err != nil {
+		return nil, fmt.Errorf("failed to get files from s3: %w", err)
+	}
+
 	wg.Wait()
 
-	if hasMetadata {
-		if metaErr != nil {
-			return nil, metaErr
-		}
-		if textErr != nil {
-			return nil, textErr
-		}
-
-		for i, metadata := range *metadatas {
-			hash := metadata.Hash
-			var views string
-			err := retry.WithRetry(ctx, func() error {
-				var err error
-				views, err = m.cache.GetViews(ctx, hash)
-				return err
-			}, retry.IsRetryableErrorRedis)
-			if err != nil {
-				m.logger.Errorf("failed to get views for hash %s: %v", hash, err)
-				(*metadatas)[i].Views = -1
-				continue
-			}
-			viewsInt, err := strconv.Atoi(views)
-			if err != nil {
-				m.logger.Errorf("failed to convert string views to int for hash %s: %v", hash, err)
-				(*metadatas)[i].Views = -1
-				continue
-			}
-			(*metadatas)[i].Views = viewsInt
-		}
-
-	} else {
-		if textErr != nil {
-			return nil, textErr
-		}
+	if metaErr != nil {
+		return nil, fmt.Errorf("failed to get metadata: %w", metaErr)
 	}
-	textWithMetadata := utils.MergeEntriesWithPasta(texts, metadatas)
-	result := &dto.PaginatedPastaDTO{
-		Pastas: *textWithMetadata,
+
+	paginatedResult := mergeTextWithMetadata(texts, metadatas, hasMetadata)
+	return &dto.PaginatedPastaDTO{
+		Status: 200,
+		Pastas: paginatedResult,
 		Page:   page,
 		Limit:  limit,
-		Total:  len(*textWithMetadata),
-	}
-	return result, nil
+		Total:  len(paginatedResult),
+	}, nil
 }
 
-func prtBool(b bool) *bool {
-	return &b
+func (m *PastaService) PaginateFavorite(ctx context.Context, rawLimit, rawPage string, userID int, hasMetadata bool) (*dto.PaginatedPastaDTO, error) {
+	return m.Paginate(ctx, rawLimit, rawPage, userID, hasMetadata, m.db.PaginateFavorites)
 }
 
-func (m *PastaService) Search(ctx context.Context, word string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	objectIDs, err := m.elastic.SearchWord(word)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search word: %w", err)
+func (m *PastaService) PaginateOnlyPublic(ctx context.Context, rawLimit, rawPage string, hasMetadata bool) (*dto.PaginatedPastaDTO, error) {
+	adapted := func(ctx context.Context, limit int, offset int, _ int) ([]string, error) {
+		return m.db.PaginateOnlyPublic(ctx, limit, offset)
 	}
-
-	var hashs []string
-	err = retry.WithRetry(ctx, func() error {
-		var err error
-		hashs, err = m.db.GetPublicHashs(ctx, objectIDs)
-		return err
-	}, retry.IsRetryableErrorDatabase)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get hashs from db:%w", err)
-	}
-	const link string = "localhost:10002/receive/"
-
-	for i := 0; i < len(hashs); i++ {
-		hashs[i] = link + hashs[i]
-	}
-	return hashs, nil
+	return m.Paginate(ctx, rawLimit, rawPage, 0, hasMetadata, adapted)
 }
 
-func (m *PastaService) Update(ctx context.Context, newText []byte, hash string) (*models.Pasta, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+func (m *PastaService) PaginateForUserByID(ctx context.Context, rawLimit, rawPage string, userID int, hasMetadata bool) (*dto.PaginatedPastaDTO, error) {
+	return m.Paginate(ctx, rawLimit, rawPage, userID, hasMetadata, m.db.PaginateOnlyByUserID)
+}
 
-	var objectID string
-	err := retry.WithRetry(ctx, func() error {
-		var err error
-		objectID, err = m.db.GetKey(ctx, hash)
-		return err
-	}, retry.IsRetryableErrorDatabase)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get objectID from db: %w", err)
-	}
+func mergeTextWithMetadata(texts []string, metadatas []models.Pasta, hasMetadata bool) []dto.TextsWithMetadata {
+	result := make([]dto.TextsWithMetadata, 0, len(texts))
 
-	newTextBytes := bytes.NewReader(newText)
-
-	err = retry.WithRetry(ctx, func() error {
-		return m.s3.Update(ctx, newTextBytes, objectID)
-	}, retry.IsRetryableErrorMinio)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update s3 value: %w", err)
-	}
-
-	var metadata *models.Pasta
-	err = retry.WithRetry(ctx, func() error {
-		var err error
-		metadata, err = m.db.UpdateSizeAndReturnAll(ctx, hash, int(newTextBytes.Size()))
-		return err
-	}, retry.IsRetryableErrorDatabase)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update db: %w", err)
-	}
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		err := retry.WithRetry(ctx, func() error {
-			return m.cache.AddText(ctx, hash, newText)
-		}, retry.IsRetryableErrorRedis)
-		if err != nil {
-			m.logger.Errorf("failed to set new text to cache: %v", err)
+	for i := 0; i < len(texts); i++ {
+		var metadata *models.Pasta
+		if hasMetadata && i < len(metadatas) {
+			metadata = &metadatas[i]
+		} else {
+			metadata = nil
 		}
-	}()
-	return metadata, nil
+		result = append(result, dto.TextsWithMetadata{
+			Text:     texts[i],
+			Metadata: metadata,
+		})
+	}
+	return result
 }

@@ -8,9 +8,7 @@ import (
 	"log"
 	domain "pastebin/internal/domain/repository"
 	"pastebin/internal/models"
-	"pastebin/pkg/dto"
 	"pastebin/pkg/workerpool"
-	"sort"
 	"sync"
 	"time"
 
@@ -65,56 +63,46 @@ func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword ma
 	return paste, nil
 }
 
-/*
-nil - без разницы есть пароль или нет
-true - пароль должен быть
-false - пароля не должно быть
-*/
-func isPasswordNeed(isPassword *bool, objInfo *minio.ObjectInfo) bool {
-	if isPassword == nil {
-		return true
-	} else if *isPassword {
-		hashPassword, exists := objInfo.UserMetadata[hasPassword]
-		if exists && hashPassword == "true" {
-			return true
-		} else {
-			return false
-		}
-	} else {
-		hashPassword, exists := objInfo.UserMetadata[hasPassword]
-		if exists && hashPassword == "false" {
-			return true
-		} else {
-			return false
-		}
-	}
-}
+// /*
+// nil - без разницы есть пароль или нет
+// true - пароль должен быть
+// false - пароля не должно быть
+// */
+// func isPasswordNeed(isPassword *bool, objInfo *minio.ObjectInfo) bool {
+// 	if isPassword == nil {
+// 		return true
+// 	} else if *isPassword {
+// 		hashPassword, exists := objInfo.UserMetadata[hasPassword]
+// 		if exists && hashPassword == "true" {
+// 			return true
+// 		} else {
+// 			return false
+// 		}
+// 	} else {
+// 		hashPassword, exists := objInfo.UserMetadata[hasPassword]
+// 		if exists && hashPassword == "false" {
+// 			return true
+// 		} else {
+// 			return false
+// 		}
+// 	}
+// }
 
-func (m *S3) Get(ctx context.Context, key string, password *bool) (*string, *time.Time, error) {
+func (m *S3) Get(ctx context.Context, key string) (string, error) {
 	if ctx.Err() != nil {
-		return nil, nil, ctx.Err()
+		return "", ctx.Err()
 	}
 
 	file, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("error while getting URL for object %s: %w", key, err)
+		return "", fmt.Errorf("error while getting URL for object %s: %w", key, err)
 	}
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error while reading file: %w", err)
+		return "", fmt.Errorf("error while reading file: %w", err)
 	}
-
-	stat, err := file.Stat()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get stat of object: %w", err)
-	}
-	result := string(data)
-
-	if isPasswordNeed(password, &stat) {
-		return &result, &stat.LastModified, nil
-	}
-	return nil, nil, nil
+	return string(data), nil
 }
 
 func (m *S3) Update(ctx context.Context, newText *bytes.Reader, objectID string) error {
@@ -146,51 +134,49 @@ func (m *S3) Delete(ctx context.Context, key string) error {
 	}
 	return nil
 }
-func (m *S3) GetFiles(ctx context.Context, keys []string, password *bool) (*[]dto.Entry, error) {
+
+func (m *S3) GetFiles(ctx context.Context, keys []string) ([]string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	dataCh := make(chan dto.Entry, len(keys))
-	errCh := make(chan error, len(keys))
-
-	handleError := func(err error) {
-		select {
-		case errCh <- err:
-		default:
-			cancel()
-			return
-		}
+	type result struct {
+		index int
+		text  string
 	}
 
-	var wg sync.WaitGroup
-	for _, key := range keys {
+	textCh := make(chan result, len(keys))
+	errCh := make(chan error, len(keys))
+
+	wg := &sync.WaitGroup{}
+	for i, key := range keys {
 		wg.Add(1)
-		key := key
+		index := i
+		k := key
 
 		m.pool.Tasks <- func() {
 			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					handleError(fmt.Errorf("panic in GetFile: %v", r))
-				}
-			}()
 
 			if ctx.Err() != nil {
 				return
 			}
 
-			data, lastModified, err := m.Get(ctx, key, password)
+			text, err := m.Get(ctx, k)
 			if err != nil {
-				handleError(err)
+				select {
+				case errCh <- err:
+					cancel()
+				default:
+				}
 				return
 			}
-			if data == nil || lastModified == nil {
-				// handleError(fmt.Errorf("text or lastmodified is empty"))
+
+			if text == "" {
+				log.Printf("empty text for key %s", k)
 				return
 			}
 
 			select {
-			case dataCh <- dto.Entry{Text: *data, ObjectID: key, Time: *lastModified}:
+			case textCh <- result{index: index, text: text}:
 			case <-ctx.Done():
 				return
 			}
@@ -199,27 +185,22 @@ func (m *S3) GetFiles(ctx context.Context, keys []string, password *bool) (*[]dt
 
 	go func() {
 		wg.Wait()
-		close(dataCh)
+		close(textCh)
 		close(errCh)
 	}()
 
-	var datas []dto.Entry
-	var errs []error
-
-	for data := range dataCh {
-		datas = append(datas, data)
+	texts := make([]string, len(keys))
+	for text := range textCh {
+		texts[text.index] = text.text
 	}
 
+	var errs []error
 	for err := range errCh {
 		errs = append(errs, err)
 	}
 
 	if len(errs) > 0 {
-		return nil, fmt.Errorf("error while getting objects: %v", errs)
+		return nil, fmt.Errorf("error while getting text from s3: %v", errs)
 	}
-
-	sort.Slice(datas, func(i, j int) bool {
-		return datas[i].Time.Before(datas[j].Time)
-	})
-	return &datas, nil
+	return texts, nil
 }

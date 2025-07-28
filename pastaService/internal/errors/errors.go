@@ -35,5 +35,8 @@ var (
 	ErrUserNotFound       = errors.New("user is not found")
 	ErrUserAlreadyExist   = errors.New("user already exists")
 
-	ErrEmptySearch = errors.New("search is empty")
+	ErrEmptySearchField  = errors.New("search field is empty")
+	ErrEmptySearchResult = errors.New("empty search result")
+
+	ErrNotAllowed = errors.New("not allowed")
 )

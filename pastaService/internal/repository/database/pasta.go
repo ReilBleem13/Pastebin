@@ -9,6 +9,7 @@ import (
 	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
 	"pastebin/internal/models"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -208,11 +209,11 @@ func (m *pastaDatabase) IsAccessPrivate(ctx context.Context, userID int, hash st
 	return exists, nil
 }
 
-func (m *pastaDatabase) Paginate(ctx context.Context, limit, offset int) (*[]string, error) {
+func (m *pastaDatabase) PaginateOnlyPublic(ctx context.Context, limit, offset int) ([]string, error) {
 	query := `
 		SELECT object_id 
 		FROM pastas 
-		WHERE object_id LIKE 'public:%'
+		WHERE object_id LIKE 'public:%' AND (password_hash IS NULL OR password_hash = '')
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2`
 
@@ -221,11 +222,28 @@ func (m *pastaDatabase) Paginate(ctx context.Context, limit, offset int) (*[]str
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("PaginateV1.pasta.go.db: ObjectIDS: %v", objectIDs)
-	return &objectIDs, nil
+	return objectIDs, nil
 }
 
-func (m *pastaDatabase) PaginateByUserID(ctx context.Context, limit, offset, userID int) (*[]string, error) {
+func (m *pastaDatabase) PaginateFavorites(ctx context.Context, limit, offset, userID int) ([]string, error) {
+	query := `
+		SELECT p.object_id
+		FROM pastas p
+		JOIN favorites f ON p.id = f.pasta_id
+		WHERE f.user_id = $1
+		ORDER BY f.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	var objectIDs []string
+	err := m.db.SelectContext(ctx, &objectIDs, query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return objectIDs, nil
+
+}
+
+func (m *pastaDatabase) PaginateOnlyByUserID(ctx context.Context, limit, offset, userID int) ([]string, error) {
 	query := `
 		SELECT object_id 
 		FROM pastas 
@@ -238,11 +256,10 @@ func (m *pastaDatabase) PaginateByUserID(ctx context.Context, limit, offset, use
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("PaginateByUserID.pasta.go.db: ObjectIDS: %v", objectIDs)
-	return &objectIDs, nil
+	return objectIDs, nil
 }
 
-func (m *pastaDatabase) GetManyMetadataPublic(ctx context.Context, objectID *[]string) (*[]models.Pasta, error) {
+func (m *pastaDatabase) GetManyMetadataPublic(ctx context.Context, objectID []string) ([]models.Pasta, error) {
 	var metadatas []models.Pasta
 
 	query := `
@@ -251,15 +268,15 @@ func (m *pastaDatabase) GetManyMetadataPublic(ctx context.Context, objectID *[]s
 		WHERE object_id = ANY($1) AND password_hash = ''
 	`
 
-	err := m.db.SelectContext(ctx, &metadatas, query, pq.Array(*objectID))
+	err := m.db.SelectContext(ctx, &metadatas, query, pq.Array(objectID))
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Длина слайса objectIDs: %d. Кол-во полученных паст: %d", len(*objectID), len(metadatas))
-	return &metadatas, nil
+	fmt.Printf("Длина слайса objectIDs: %d. Кол-во полученных паст: %d", len(objectID), len(metadatas))
+	return metadatas, nil
 }
 
-func (m *pastaDatabase) GetManyMetadataByUserID(ctx context.Context, objectID *[]string, userID int) (*[]models.Pasta, error) {
+func (m *pastaDatabase) GetManyMetadata(ctx context.Context, objectID []string) ([]models.Pasta, error) {
 	var metadatas []models.Pasta
 
 	query := `
@@ -267,11 +284,11 @@ func (m *pastaDatabase) GetManyMetadataByUserID(ctx context.Context, objectID *[
 		FROM pastas
 		WHERE object_id = ANY($1)`
 
-	err := m.db.SelectContext(ctx, &metadatas, query, pq.Array(*objectID))
+	err := m.db.SelectContext(ctx, &metadatas, query, pq.Array(objectID))
 	if err != nil {
 		return nil, err
 	}
-	return &metadatas, nil
+	return metadatas, nil
 }
 
 func (m *pastaDatabase) GetExpireAfterReadField(ctx context.Context, hash string) (bool, error) {
@@ -323,4 +340,67 @@ func (m *pastaDatabase) UpdateSizeAndReturnAll(ctx context.Context, hash string,
 		return nil, err
 	}
 	return &metadata, nil
+}
+
+func (m *pastaDatabase) Favorite(ctx context.Context, hash string, id int) error {
+	timeNow := time.Now()
+
+	query := `
+		INSERT INTO favorites(user_id, pasta_id, created_at)
+		VALUES($1, (SELECT id FROM pastas WHERE hash = $2), $3)
+	`
+
+	_, err := m.db.ExecContext(ctx, query, id, hash, timeNow)
+	if err != nil {
+		return fmt.Errorf("failed to insert new favorite pasta: %w", err)
+	}
+	return nil
+}
+
+func (m *pastaDatabase) GetFavoriteAndCheckUser(ctx context.Context, userID, favoriteID int) (string, error) {
+	var userIDfromDB int
+	var hash string
+
+	query := `
+		SELECT f.user_id, p.hash
+		FROM pastas p
+		JOIN favorites f ON f.pasta_id = p.id
+		WHERE f.id = $1
+	`
+	err := m.db.QueryRowContext(ctx, query, favoriteID).Scan(&userIDfromDB, &hash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", customerrors.ErrPastaNotFound
+		}
+		return "", err
+	}
+
+	if userIDfromDB != userID {
+		return "", customerrors.ErrNotAllowed
+	}
+	return hash, nil
+}
+
+func (m *pastaDatabase) DeleteFavorite(ctx context.Context, userID, favoriteID int) error {
+	query := `
+		SELECT user_id FROM favorites WHERE id = $1
+	`
+	var userIDfromDB int
+	err := m.db.GetContext(ctx, &userIDfromDB, query, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return customerrors.ErrPastaNotFound
+		}
+		return err
+	}
+
+	if userIDfromDB != userID {
+		return customerrors.ErrNotAllowed
+	}
+
+	query = `
+		DELETE FROM favorites WHERE id = $1
+	`
+	_, err = m.db.ExecContext(ctx, query, favoriteID)
+	return err
 }

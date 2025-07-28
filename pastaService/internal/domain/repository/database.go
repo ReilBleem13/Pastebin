@@ -22,8 +22,8 @@ type PastaDatabase interface {
 	GetUserID(ctx context.Context, hash string) (int, error)
 
 	GetMetadata(ctx context.Context, objectID string) (*models.Pasta, error)
-	GetManyMetadataPublic(ctx context.Context, objectID *[]string) (*[]models.Pasta, error)
-	GetManyMetadataByUserID(ctx context.Context, objectID *[]string, userID int) (*[]models.Pasta, error)
+	GetManyMetadata(ctx context.Context, objectID []string) ([]models.Pasta, error)
+	GetManyMetadataPublic(ctx context.Context, objectID []string) ([]models.Pasta, error)
 
 	GetPassword(ctx context.Context, hash string) (string, error)
 	GetKeys(ctx context.Context, userID int) ([]string, error)
@@ -38,8 +38,13 @@ type PastaDatabase interface {
 	IsPastaExistsByObjectID(ctx context.Context, objectID string) (bool, error)
 	IsAccessPrivate(ctx context.Context, userID int, hash string) (bool, error)
 
-	Paginate(ctx context.Context, limit, offset int) (*[]string, error)
-	PaginateByUserID(ctx context.Context, limit, offset, userID int) (*[]string, error)
+	PaginateOnlyPublic(ctx context.Context, limit, offset int) ([]string, error)
+	PaginateOnlyByUserID(ctx context.Context, limit, offset, userID int) ([]string, error)
+	PaginateFavorites(ctx context.Context, limit, offset, userID int) ([]string, error)
+
+	Favorite(ctx context.Context, hash string, id int) error
+	GetFavoriteAndCheckUser(ctx context.Context, userID, favoriteID int) (string, error)
+	DeleteFavorite(ctx context.Context, userID, favoriteID int) error
 
 	UpdateSizeAndReturnAll(ctx context.Context, hash string, size int) (*models.Pasta, error)
 }

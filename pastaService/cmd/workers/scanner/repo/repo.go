@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	domain "pastebin/internal/domain/repository"
 	customerrors "pastebin/internal/errors"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -19,12 +20,12 @@ func NewScannerDatabase(db *sqlx.DB) domain.ScannerDatabase {
 
 func (s *ScannerDatabase) GetExpiredPastas(ctx context.Context) ([]string, error) {
 	var objectIDs []string
-
+	timeNow := time.Now()
 	query := `
-		SELECT object_id FROM pastas WHERE expires_at < NOW()
+		SELECT object_id FROM pastas WHERE expires_at < $1
 	`
 
-	err := s.db.SelectContext(ctx, &objectIDs, query)
+	err := s.db.SelectContext(ctx, &objectIDs, query, timeNow)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, customerrors.ErrPastaNotFound

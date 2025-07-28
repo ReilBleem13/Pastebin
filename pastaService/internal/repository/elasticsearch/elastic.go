@@ -87,7 +87,7 @@ func (e *Elastic) SearchWord(word string) ([]string, error) {
 
 	if word == "" {
 		log.Println("Пустой поисковый запрос — ничего не ищем.")
-		return nil, customerrors.ErrEmptySearch
+		return nil, customerrors.ErrEmptySearchField
 	}
 
 	query := map[string]interface{}{

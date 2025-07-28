@@ -13,13 +13,21 @@ type Pasta interface {
 	Permission(ctx context.Context, hash, password, visibility string, userID int) error
 
 	Get(ctx context.Context, hash string, flag bool) (*models.PastaWithData, error)
-	GetText(ctx context.Context, keyText, objectID, hash string) (*string, error)
+	GetText(ctx context.Context, keyText, objectID, hash string) (string, error)
 	GetMetadata(ctx context.Context, keyMeta string, objectID string) (*models.Pasta, error)
 
 	Delete(ctx context.Context, hash string) error
-	Paginate(ctx context.Context, rawLimit, rawPage string, hasMetadata bool, userID *int) (*dto.PaginatedPastaDTO, error)
+	Paginate(ctx context.Context, rawLimit, rawPage string, userID int, hasMetadata bool, paginateFn models.PaginateFunc) (*dto.PaginatedPastaDTO, error)
 	Search(ctx context.Context, word string) ([]string, error)
 	Update(ctx context.Context, newText []byte, hash string) (*models.Pasta, error)
+
+	PaginateFavorite(ctx context.Context, rawLimit, rawPage string, userID int, hasMetadata bool) (*dto.PaginatedPastaDTO, error)
+	PaginateOnlyPublic(ctx context.Context, rawLimit, rawPage string, hasMetadata bool) (*dto.PaginatedPastaDTO, error)
+	PaginateForUserByID(ctx context.Context, rawLimit, rawPage string, userID int, hasMetadata bool) (*dto.PaginatedPastaDTO, error)
+
+	Favorite(ctx context.Context, hash, visibility string, userID int) error
+	GetFavorite(ctx context.Context, userID, favoriteID int, withMetadata bool) (*models.PastaWithData, error)
+	DeleteFavorite(ctx context.Context, userID, favoriteID int) error
 
 	GetVisibility(ctx context.Context, hash string) (string, error)
 	GetUserID(ctx context.Context, hash string) (int, error)

@@ -84,16 +84,16 @@ func (r *pastaCache) AddMeta(ctx context.Context, pasta *models.Pasta) error {
 	return r.redis.Set(ctx, metaPrefix+pasta.Hash, pastaJSON, metaCacheTTL).Err()
 }
 
-func (r *pastaCache) GetText(ctx context.Context, keyText string) (*string, error) {
+func (r *pastaCache) GetText(ctx context.Context, keyText string) (string, error) {
 	resultText, err := r.redis.Get(ctx, keyText).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, customerrors.ErrKeyDoesntExist
+			return "", customerrors.ErrKeyDoesntExist
 		} else {
-			return nil, err
+			return "", err
 		}
 	}
-	return &resultText, nil
+	return resultText, nil
 }
 
 func (r *pastaCache) GetMeta(ctx context.Context, keyMeta string) (*models.Pasta, error) {

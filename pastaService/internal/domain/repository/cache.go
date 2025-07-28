@@ -15,7 +15,7 @@ type Cache interface {
 type PastaCache interface {
 	AddText(ctx context.Context, hash string, data []byte) error
 	AddMeta(ctx context.Context, pasta *models.Pasta) error
-	GetText(ctx context.Context, keyData string) (*string, error)
+	GetText(ctx context.Context, keyData string) (string, error)
 	GetMeta(ctx context.Context, keyMeta string) (*models.Pasta, error)
 
 	CreateViews(ctx context.Context, hash string, expiration *time.Duration) error

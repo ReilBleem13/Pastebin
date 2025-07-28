@@ -6,7 +6,7 @@ KAFKA_SERVICE=kafka
 DB_URL=postgres://postgres:qwerty@localhost:5436/test?sslmode=disable
 
 DOCKER_NETWORK=pastebin_pastebin-net
-
+  
 docker-up:
 	docker-compose up --build -d $(name)
 
