@@ -45,11 +45,19 @@ func (l LoggingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 			l.logger.Debug(" -> ", logging.StringAttr("CMD", cmd.Name()),
 				logging.StringAttr("ARGS", ArgsToString(cmd.Args())))
 		}
+
 		err := next(ctx, cmds)
+
 		for _, cmd := range cmds {
-			l.logger.Debug(" <- ", logging.StringAttr("CMD", cmd.Name()),
-				logging.StringAttr("ERR", cmd.Err().Error()))
+			if cmd.Err() != nil {
+				l.logger.Debug(" <- ", logging.StringAttr("CMD", cmd.Name()),
+					logging.StringAttr("ERR", cmd.Err().Error()))
+			} else {
+				l.logger.Debug(" <- ", logging.StringAttr("CMD", cmd.Name()),
+					logging.StringAttr("ERR", "nil"))
+			}
 		}
+
 		return err
 	}
 }
@@ -68,8 +76,8 @@ func NewRedisClient(ctx context.Context, cfg config.RedisConfig) *RedisClient {
 			MaxRetries:   cfg.MaxRetries,
 		})
 	} else {
-		client = redis.NewClusterClient(&redis.ClusterOptions{
-			Addrs:        cfg.Addrs,
+		client = redis.NewClient(&redis.Options{
+			Addr:         cfg.Addr,
 			Password:     cfg.Password,
 			DialTimeout:  cfg.DialTimeout,
 			ReadTimeout:  cfg.ReadTimeout,

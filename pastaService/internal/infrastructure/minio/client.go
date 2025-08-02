@@ -35,7 +35,7 @@ func NewMinioClient(ctx context.Context, cfg config.MinioConfig, workers int) (*
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minio client: %w", err)
 	}
-
+	logging.StringAttr("bucker", cfg.Bucket)
 	exists, err := client.BucketExists(ctx, cfg.Bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check bucket existence: %w", err)

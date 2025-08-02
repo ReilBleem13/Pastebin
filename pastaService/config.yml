@@ -6,9 +6,9 @@ app:
 storage:
   host: db
   port: 5432
-  username: colorvax
-  dbname: pastas
-  password: colorvax_super
+  username: postgres
+  dbname: test
+  password: qwerty
   sslmode: disable
 
 minio:
@@ -22,7 +22,8 @@ minio:
   ssl: false
 
 redis:
-  mode: cluster # cluster or standalone
+  mode: standalone # cluster or standalone
+  addr: redis:6379
   addrs: 
     - redis1:7000
     - redis2:7001
@@ -38,6 +39,8 @@ redis:
   max_retries: 3
 
 elastic:
+  mode: standalone # cluster or standalone
+  addr: http://elasticsearch:9200
   addrs:
     - http://elasticsearch1:9200
     - http://elasticsearch2:9200
@@ -53,6 +56,8 @@ elastic:
   index: pastas
 
 kafka:
+  mode: standalone # cluster or standalone
+  addr: kafka:9092
   addrs: 
     - kafka1:9092
     - kafka2:9092

@@ -38,9 +38,16 @@ type ElasticClient struct {
 }
 
 func NewElasticClient(ctx context.Context, cfg config.ElasticConfig) (*ElasticClient, error) {
+	addresses := []string{}
+
+	if cfg.Mode == "cluster" {
+		addresses = cfg.Addrs
+	} else {
+		addresses = append(addresses, cfg.Addr)
+	}
 
 	esCfg := elasticsearch.Config{
-		Addresses:           cfg.Addrs,
+		Addresses:           addresses,
 		Username:            cfg.Username,
 		Password:            cfg.Password,
 		Logger:              &Logger{ctx: ctx},

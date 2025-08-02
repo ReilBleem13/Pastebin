@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/theartofdevel/logging"
 )
 
 const (
@@ -19,24 +20,39 @@ type Producer struct {
 }
 
 func NewProducer(ctx context.Context, cfg config.KafkaConfig, transactionalID string) (*Producer, error) {
+	logging.StringAttr("tranID", transactionalID)
+
+	bootstrapServers := ""
+	if cfg.Mode == "cluster" {
+		bootstrapServers = strings.Join(cfg.Addrs, ", ")
+	} else {
+		bootstrapServers = cfg.Addr
+	}
+
 	conf := &kafka.ConfigMap{
-		"bootstrap.servers":                     strings.Join(cfg.Address, ","),
+		"bootstrap.servers":                     bootstrapServers,
 		"acks":                                  cfg.Acks,
 		"retries":                               cfg.Retries,
 		"enable.idempotence":                    cfg.EnableIdempotence,
 		"batch.num.messages":                    cfg.BatchNumMessages,
-		"transactional.id":                      transactionalID,
 		"max.in.flight.requests.per.connection": cfg.MaxInFlightRequestsPerConn,
 		"delivery.timeout.ms":                   cfg.DeliveryTimeoutMs,
 		"request.timeout.ms":                    cfg.RequestTimeoutMs,
 	}
+
+	if transactionalID != "" {
+		conf.SetKey("transactional.id", transactionalID)
+	}
+
 	p, err := kafka.NewProducer(conf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new producer: %v", err)
 	}
 
-	if err := p.InitTransactions(ctx); err != nil {
-		return nil, fmt.Errorf("failed to init transactions: %w", err)
+	if transactionalID != "" {
+		if err := p.InitTransactions(ctx); err != nil {
+			return nil, fmt.Errorf("failed to init transactions: %w", err)
+		}
 	}
 	return &Producer{producer: p}, nil
 }

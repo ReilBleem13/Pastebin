@@ -41,6 +41,13 @@ func main() {
 
 	ctxWithLogger := logging.ContextWithLogger(ctx, logger)
 
+	logging.WithAttrs(ctx,
+		logging.StringAttr("username", cfg.Storage.Username),
+		logging.StringAttr("password", cfg.Storage.Password),
+		logging.StringAttr("host", cfg.Storage.Host),
+		logging.StringAttr("port", cfg.Storage.Port),
+		logging.StringAttr("database", cfg.Storage.Dbname),
+	).Info("Postgres initializing")
 	dbURL := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
 		cfg.Storage.Host, cfg.Storage.Port, cfg.Storage.Username, cfg.Storage.Dbname, cfg.Storage.Password, cfg.Storage.Sslmode)
 	postgres, err := postgres.NewPostgresDB(ctx, dbURL)
@@ -48,13 +55,6 @@ func main() {
 		logger.Error("Failed to initialize postgres", logging.ErrAttr(err))
 		return
 	}
-	logging.WithAttrs(ctx,
-		logging.StringAttr("username", cfg.Storage.Username),
-		logging.StringAttr("password", "<REMOVED>"),
-		logging.StringAttr("host", cfg.Storage.Host),
-		logging.StringAttr("port", cfg.App.Port),
-		logging.StringAttr("database", cfg.Storage.Dbname),
-	).Info("Postgres initialized")
 	defer postgres.Close()
 
 	minio, err := minio.NewMinioClient(ctx, cfg.Minio, 10)
@@ -106,8 +106,12 @@ func main() {
 	).Info("ElasticSearch initialized")
 	defer elastic.Close()
 
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "unknown-host"
+	}
 	transactionalID := fmt.Sprintf("producer-%s", hostname)
+
 	producer, err := kafka.NewProducer(ctx, cfg.Kafka, transactionalID)
 	if err != nil {
 		logger.Error("Failed to initialize kafka producer", logging.ErrAttr(err))

@@ -385,7 +385,7 @@ services:
     build:
       context: ./setup/fluentd/
     container_name: fluentd
-    restart: unless-stopped
+    restart: always
     volumes:
       - ./setup/fluentd/fluentd.conf:/fluentd/etc/fluent.conf
     ports:
@@ -412,19 +412,21 @@ services:
       - network.host=0.0.0.0
       - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
       - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=MyS3cretPassw0rd!321dfaskdasldwqo
     ulimits:
       memlock:
-        soft: -1
+        soft: -1 
         hard: -1
+      nofile:
+        soft: 65536 
+        hard: 65536
     volumes:
       - opensearch-data:/usr/share/opensearch/data
-    ports:
-      - 9205:9200
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 30
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
     - pastebin-net
 
@@ -441,10 +443,10 @@ services:
     environment:
       OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5601/status"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      test: /bin/bash -c "</dev/tcp/localhost/5601"
+      start_period: 5s
+      interval: 5s
+      retries: 30
     networks:
     - pastebin-net
 

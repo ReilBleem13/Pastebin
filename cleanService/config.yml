@@ -5,8 +5,8 @@ storage:
   host: db
   port: 5432
   username: postgres
-  dbname: test
-  password: qwerty
+  dbname: pastas
+  password: qwerty123
   sslmode: disable
 
 minio:

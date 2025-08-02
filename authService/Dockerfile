@@ -19,5 +19,4 @@ COPY --from=builder /app /app/app
 COPY config.yml /app/config.yml
 
 EXPOSE 10001
-
 CMD ["/app/app"]

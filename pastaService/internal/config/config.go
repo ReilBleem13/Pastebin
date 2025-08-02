@@ -45,8 +45,8 @@ type MinioConfig struct {
 
 type RedisConfig struct {
 	Mode         string        `yaml:"mode"`
-	Addrs        []string      `yaml:"addrs"`
 	Addr         string        `yaml:"addr"`
+	Addrs        []string      `yaml:"addrs"`
 	Password     string        `yaml:"password"`
 	DialTimeout  time.Duration `yaml:"dial_timeout"`
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
@@ -56,6 +56,8 @@ type RedisConfig struct {
 }
 
 type ElasticConfig struct {
+	Mode               string   `yaml:"mode"`
+	Addr               string   `yaml:"addr"`
 	Addrs              []string `yaml:"addrs"`
 	Username           string   `yaml:"username"`
 	Password           string   `yaml:"password"`
@@ -66,7 +68,9 @@ type ElasticConfig struct {
 }
 
 type KafkaConfig struct {
-	Address                    []string `yaml:"addrs"`
+	Mode                       string   `yaml:"mode"`
+	Addr                       string   `yaml:"addr"`
+	Addrs                      []string `yaml:"addrs"`
 	Acks                       string   `yaml:"acks"`
 	Retries                    int      `yaml:"retries"`
 	EnableIdempotence          bool     `yaml:"enable_idempotence"`

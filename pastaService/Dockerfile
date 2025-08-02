@@ -15,5 +15,4 @@ RUN go build -o /app/app ./cmd/app/main.go
 COPY config.yml /app/config.yml
 
 EXPOSE 10002
-
 CMD ["/app/app"]
