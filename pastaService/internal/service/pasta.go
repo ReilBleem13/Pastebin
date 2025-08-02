@@ -36,8 +36,6 @@ const (
 
 	link string = "localhost:10002/receive/"
 
-	privateVisibility string = "private"
-
 	textPrefix string = "text"
 	metaPrefix string = "meta"
 	userPrefix string = "user"
@@ -60,16 +58,11 @@ func (p *PastaService) GetVisibility(ctx context.Context, hash string) (string, 
 	return p.db.GetVisibility(ctx, hash)
 }
 
-func (p *PastaService) GetUserID(ctx context.Context, hash string) (int, error) {
-	return p.db.GetUserID(ctx, hash)
-}
-
 func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, userID int) (*models.Pasta, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	m.logger.Debug("Validating request create pasta")
-
 	expiration, err := validate.ValidRequestCreatePasta(req)
 	if err != nil {
 		return nil, err
@@ -85,9 +78,7 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 		prefix = defaultNewFilePrefix
 	}
 
-	options := map[string]string{"has_password": "false"}
 	passwordHash := ""
-
 	if req.Password != "" {
 		m.logger.Debug("hashing password")
 
@@ -95,13 +86,12 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to hash password: %w", err)
 		}
-		options["has_password"] = "true"
 	}
 
 	data := []byte(req.Message)
 
 	m.logger.Debug("Store to s3")
-	pastaMetadata, err := m.s3.Store(ctx, prefix, data, options, timeNow)
+	pastaMetadata, err := m.s3.Store(ctx, prefix, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store pasta in S3: %w", err)
 	}
@@ -111,8 +101,9 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 	pastaMetadata.ExpireAfterRead = req.ExpireAfterRead
 	pastaMetadata.PasswordHash = passwordHash
 	pastaMetadata.Language = req.Language
-	pastaMetadata.Visibility = req.Visibility
+	pastaMetadata.Visibility = models.Visibility(req.Visibility)
 	pastaMetadata.UserID = userID
+	pastaMetadata.CreatedAt = timeNow
 
 	m.logger.Debug("Store to database")
 	err = retry.Retry(ctx, func() error {
@@ -171,7 +162,7 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 		return customerrors.ErrPastaNotFound
 	}
 
-	if visibility == privateVisibility {
+	if visibility == string(models.VisibilityPrivate) {
 		m.logger.Debug("Checking is access private")
 
 		var hasAccess bool
@@ -181,7 +172,7 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 			return err
 		}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 		if err != nil {
-			return fmt.Errorf("failed to check, accecc is private: %w", err)
+			return fmt.Errorf("failed to check access private: %w", err)
 		}
 		if !hasAccess {
 			return customerrors.ErrNoAccess
@@ -568,7 +559,7 @@ func (m *PastaService) Favorite(ctx context.Context, hash, visibility string, us
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	if visibility == privateVisibility {
+	if visibility == string(models.VisibilityPrivate) {
 		return customerrors.ErrNotAllowed
 	}
 

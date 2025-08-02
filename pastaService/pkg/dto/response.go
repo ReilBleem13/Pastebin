@@ -9,7 +9,7 @@ type SuccessCreatePastaResponse struct {
 	Status   int              `json:"status"`
 	Message  string           `json:"message"`
 	Link     string           `json:"link"`
-	Metadata PastaMetadataDTO `json:"metadata,omitempty"`
+	Metadata MetadataResponse `json:"metadata,omitempty"`
 }
 
 type SuccessUpdatedPastaResponse struct {
@@ -18,13 +18,13 @@ type SuccessUpdatedPastaResponse struct {
 	Metadata models.Pasta `json:"metadata"`
 }
 
-type PastaMetadataDTO struct {
-	Key        string    `json:"key"`
-	Size       int       `json:"size"`
-	Language   string    `json:"language"`
-	Visibility string    `json:"visibility"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
+type MetadataResponse struct {
+	Key        string            `json:"key"`
+	Size       int               `json:"size"`
+	Language   string            `json:"language"`
+	Visibility models.Visibility `json:"visibility"`
+	CreatedAt  time.Time         `json:"created_at"`
+	ExpiresAt  time.Time         `json:"expires_at"`
 }
 
 type GetPastaResponse struct {
@@ -40,12 +40,6 @@ type PaginatedPastaDTO struct {
 	Page   int                 `json:"page"`
 	Limit  int                 `json:"limit"`
 	Total  int                 `json:"total"`
-}
-
-type Entry struct {
-	Text     string    `json:"text"`
-	ObjectID string    `json:"-"`
-	Time     time.Time `json:"-"`
 }
 
 type TextsWithMetadata struct {

@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"pastebin/internal/config"
 	customerrors "pastebin/internal/errors"
 	"time"
 
@@ -14,35 +15,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-const (
-	accessTTL  int    = 15
-	refreshTTL int    = 7
-	jwtKey     string = "13287kjKNAskndq!*&8721632xkads239421931hfdsakfn"
-)
-
-func GenerateToken(userID int) (string, error) {
-	accessClaims := Claims{
-		UserID: userID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(accessTTL) * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Subject:   fmt.Sprintf("%d", userID),
-		},
-	}
-	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessTokenString, err := accessToken.SignedString([]byte(jwtKey))
-	if err != nil {
-		return "", err
-	}
-	return accessTokenString, nil
-}
+var jwtKey = []byte(config.GetConfig().App.JWTSecret)
 
 func VerifyAccessToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, customerrors.ErrUnexpectedSignMethod
 		}
-		return []byte(jwtKey), nil
+		return jwtKey, nil
 	})
 
 	if err != nil {

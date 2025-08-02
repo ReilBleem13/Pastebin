@@ -19,21 +19,17 @@ var (
 	ErrPasswordIsEmpty = errors.New("password is empty")
 	ErrWrongPassword   = errors.New("password is wrong")
 
-	// redis
 	ErrKeyDoesntExist = errors.New("key doesn't exitst")
 
-	//middleware
 	ErrUserNotAuthenticated = errors.New("user is not authenticated")
 	ErrInternal             = errors.New("internal server error")
 
-	// jwt
 	ErrUnexpectedSignMethod = errors.New("unexpected signing method")
 	ErrTokenExpired         = errors.New("token expired")
 	ErrInvalidToken         = errors.New("token is invalid")
 
-	//user
 	ErrInvalidEmailFormat = errors.New("invalid email format")
-	ErrShortPassword      = errors.New("password is too short. Min lenght = 10")
+	ErrShortPassword      = errors.New("password is too short")
 	ErrUserNotFound       = errors.New("user is not found")
 	ErrUserAlreadyExist   = errors.New("user already exists")
 

@@ -2,11 +2,13 @@ package handler
 
 import (
 	"errors"
-	"net/http"
 	customerrors "pastebin/internal/errors"
+	"pastebin/internal/models"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/theartofdevel/logging"
@@ -14,7 +16,6 @@ import (
 
 const (
 	authorizationHeader = "Authorization"
-	visibilityPrivate   = "private"
 	tokenPrefix         = "Bearer "
 
 	userCtx       = "userId"
@@ -61,43 +62,34 @@ func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 func (h *Handler) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h.logger.Debug("Calling RequireAuth")
-		_, exists := c.Get(userCtx)
-		if !exists {
-			c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
-			c.Abort()
+		if !h.requireUserAuth(c) {
 			return
 		}
 		c.Next()
 	}
 }
 
-func (h *Handler) AccessPostAuth() gin.HandlerFunc {
+func (h *Handler) AccessCreate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h.logger.Debug("Calling AccessPostAuth")
-		if c.Request.Method == http.MethodPost {
-			var req dto.RequestCreatePasta
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(400, gin.H{"error": customerrors.ErrInvalidRequst.Error()})
-				c.Abort()
-				return
-			}
-			c.Set(requestCtx, req)
-
-			if strings.ToLower(req.Visibility) == visibilityPrivate {
-				_, exists := c.Get(userCtx)
-				if !exists {
-					c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
-					c.Abort()
-					return
-				}
-			}
-			c.Next()
+		var req dto.RequestCreatePasta
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": customerrors.ErrInvalidRequst.Error()})
+			c.Abort()
 			return
 		}
+		c.Set(requestCtx, req)
+
+		if req.Visibility == string(models.VisibilityPrivate) {
+			if !h.requireUserAuth(c) {
+				return
+			}
+		}
+		c.Next()
 	}
 }
 
-func (h *Handler) AccessByKeyAuth() gin.HandlerFunc {
+func (h *Handler) AccessHash() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h.logger.Debug("Calling AccessByKeyAuth")
 
@@ -116,33 +108,46 @@ func (h *Handler) AccessByKeyAuth() gin.HandlerFunc {
 			return
 		}
 		c.Set(visibilityCtx, visibility)
-		if c.Request.Method == http.MethodPut {
-			userID, err := h.servises.Pasta.GetUserID(ctx, hash)
-			if err != nil {
-				h.logger.Error("Internal error on GetVisibility", logging.ErrAttr(err))
-				c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
-				c.Abort()
-				return
-			}
-			if userID == 0 {
-				c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
-				c.Abort()
-				return
-			}
-			c.Next()
-			return
-		}
 
-		if visibility == visibilityPrivate {
-			_, exists := c.Get(userCtx)
-			if !exists {
-				c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
-				c.Abort()
+		if visibility == string(models.VisibilityPrivate) {
+			if !h.requireUserAuth(c) {
 				return
 			}
 		}
 		c.Next()
 	}
+}
+
+func (h *Handler) Logger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+
+		c.Next()
+
+		latency := time.Since(start)
+		status := c.Writer.Status()
+		method := c.Request.Method
+		path := c.Request.URL.Path
+		clientIP := c.ClientIP()
+
+		h.logger.Info("Request",
+			logging.StringAttr("[method]", method),
+			logging.StringAttr("[path]", path),
+			logging.StringAttr("[status]", strconv.Itoa(status)),
+			logging.StringAttr("[latency]", latency.String()),
+			logging.StringAttr("[clientIP]", clientIP),
+		)
+	}
+}
+
+func (h *Handler) requireUserAuth(c *gin.Context) bool {
+	_, exists := c.Get(userCtx)
+	if !exists {
+		c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
+		c.Abort()
+		return false
+	}
+	return true
 }
 
 func (h *Handler) GetUserID(c *gin.Context) (int, error) {

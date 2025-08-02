@@ -2,15 +2,15 @@ package validate
 
 import (
 	customerrors "pastebin/internal/errors"
+	"pastebin/internal/models"
 	"pastebin/pkg/dto"
 	"strings"
 	"time"
 )
 
 var (
-	SupportedLanguages    = []string{"plaintext", "python", "javascript", "java", "cpp", "csharp", "ruby", "go", "sql", "markdown", "json", "yaml", "html", "css", "bash"}
-	SupportedVisibilities = []string{"public", "private"}
-	SupportedTime         = map[string]int{
+	SupportedLanguages = []string{"plaintext", "python", "javascript", "java", "cpp", "csharp", "ruby", "go", "sql", "markdown", "json", "yaml", "html", "css", "bash"}
+	SupportedTime      = map[string]int{
 		"1h": 60 * 60 * 1000,
 		"1d": 24 * 60 * 60 * 1000,
 		"1w": 7 * 24 * 60 * 60 * 1000,
@@ -19,8 +19,8 @@ var (
 
 const (
 	defaultLanguage   = "plaintext"
-	defaultVisibility = "public"
 	defaultExpiration = "1h"
+	defaultVisibility = models.VisibilityPublic
 )
 
 func CheckContains(supported []string, elem string) bool {
@@ -38,7 +38,6 @@ func ValidRequestCreatePasta(request *dto.RequestCreatePasta) (time.Duration, er
 	}
 
 	if request.Language != "" {
-		request.Language = strings.ToLower(request.Language)
 		if !CheckContains(SupportedLanguages, request.Language) {
 			return 0, customerrors.ErrInvalidLanguageFormat
 		}
@@ -47,12 +46,11 @@ func ValidRequestCreatePasta(request *dto.RequestCreatePasta) (time.Duration, er
 	}
 
 	if request.Visibility != "" {
-		request.Visibility = strings.ToLower(request.Visibility)
-		if !CheckContains(SupportedVisibilities, request.Visibility) {
+		if !models.IsValidVisibility(models.Visibility(request.Visibility)) {
 			return 0, customerrors.ErrInvalidVisibilityFormat
 		}
 	} else {
-		request.Visibility = defaultVisibility
+		request.Visibility = string(defaultVisibility)
 	}
 
 	var timeExpiration time.Duration

@@ -358,25 +358,20 @@ func (m *pastaDatabase) Favorite(ctx context.Context, hash string, id int) error
 }
 
 func (m *pastaDatabase) GetFavoriteAndCheckUser(ctx context.Context, userID, favoriteID int) (string, error) {
-	var userIDfromDB int
-	var hash string
-
 	query := `
-		SELECT f.user_id, p.hash
+		SELECT p.hash
 		FROM pastas p
 		JOIN favorites f ON f.pasta_id = p.id
-		WHERE f.id = $1
+		WHERE f.id = $1 AND f.user_id = $2
 	`
-	err := m.db.QueryRowContext(ctx, query, favoriteID).Scan(&userIDfromDB, &hash)
+
+	var hash string
+	err := m.db.QueryRowContext(ctx, query, favoriteID, userID).Scan(&hash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", customerrors.ErrPastaNotFound
 		}
 		return "", err
-	}
-
-	if userIDfromDB != userID {
-		return "", customerrors.ErrNotAllowed
 	}
 	return hash, nil
 }

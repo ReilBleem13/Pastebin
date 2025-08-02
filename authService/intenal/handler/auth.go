@@ -4,6 +4,7 @@ import (
 	myerrors "authService/intenal/errors"
 	"authService/pkg/dto"
 	"authService/pkg/hash"
+	"authService/pkg/jwt"
 	"errors"
 	"time"
 
@@ -72,15 +73,37 @@ func (h *Handler) SignIn(c *gin.Context) {
 		return
 	}
 
-	accessToken, err := h.servise.GenerateToken(ctx, &request)
+	accessToken, refreshToken, err := h.servise.GenerateToken(ctx, &request)
 	if err != nil {
 		h.logger.Errorf("internal server error during generating token: %v", err)
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, dto.SuccessLoginedDto{
-		Status:      200,
-		Message:     "Successfully logined",
-		AccessToken: accessToken,
+		Status:       200,
+		Message:      "Successfully logined",
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
 	})
+}
+
+func (h *Handler) RefreshTokenHandler(c *gin.Context) {
+	var req dto.RefreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(404, gin.H{"error": "refresh_token required"})
+	}
+
+	accessToken, err := jwt.RefreshAccessToken(req.RefreshToken)
+	if err != nil {
+		switch err {
+		case myerrors.ErrTokenExpired:
+			c.JSON(401, gin.H{"error": "refresh token expired"})
+		case myerrors.ErrInvalidToken, myerrors.ErrUnexpectedSignMethod:
+			c.JSON(401, gin.H{"error": "invalid refresh token"})
+		default:
+			c.JSON(500, gin.H{"error": "internal server error"})
+		}
+		return
+	}
+	c.JSON(200, dto.TokenResponse{AccessToken: accessToken})
 }

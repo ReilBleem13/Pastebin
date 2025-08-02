@@ -10,7 +10,6 @@ import (
 	"pastebin/internal/models"
 	"pastebin/pkg/workerpool"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
@@ -36,7 +35,7 @@ const (
 	hasPassword   string = "Has_password"
 )
 
-func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword map[string]string, timeNow time.Time) (*models.Pasta, error) {
+func (m *S3) Store(ctx context.Context, owner string, data []byte) (*models.Pasta, error) {
 	objectID := owner + uuid.New().String() + ".txt"
 	content := bytes.NewReader(data)
 
@@ -46,9 +45,7 @@ func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword ma
 		objectID,
 		content,
 		int64(len(data)),
-		minio.PutObjectOptions{
-			UserMetadata: isPassword,
-		},
+		minio.PutObjectOptions{},
 	)
 
 	if err != nil {
@@ -56,9 +53,8 @@ func (m *S3) Store(ctx context.Context, owner string, data []byte, isPassword ma
 	}
 
 	paste := &models.Pasta{
-		CreatedAt: timeNow,
-		ObjectID:  objectID,
-		Size:      int(len(data)),
+		ObjectID: objectID,
+		Size:     int(len(data)),
 	}
 	return paste, nil
 }

@@ -12,7 +12,6 @@ package mocks
 import (
 	context "context"
 	models "pastebin/internal/models"
-	dto "pastebin/pkg/dto"
 	reflect "reflect"
 	time "time"
 
@@ -74,19 +73,19 @@ func (mr *MockS3MockRecorder) Get(ctx, key, password any) *gomock.Call {
 }
 
 // GetFiles mocks base method.
-func (m *MockS3) GetFiles(ctx context.Context, objectIDs []string, password *bool) (*[]dto.Entry, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetFiles", ctx, objectIDs, password)
-	ret0, _ := ret[0].(*[]dto.Entry)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
+// func (m *MockS3) GetFiles(ctx context.Context, objectIDs []string, password *bool) (*[]dto.Entry, error) {
+// 	m.ctrl.T.Helper()
+// 	ret := m.ctrl.Call(m, "GetFiles", ctx, objectIDs, password)
+// 	ret0, _ := ret[0].(*[]dto.Entry)
+// 	ret1, _ := ret[1].(error)
+// 	return ret0, ret1
+// }
 
 // GetFiles indicates an expected call of GetFiles.
-func (mr *MockS3MockRecorder) GetFiles(ctx, objectIDs, password any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFiles", reflect.TypeOf((*MockS3)(nil).GetFiles), ctx, objectIDs, password)
-}
+// func (mr *MockS3MockRecorder) GetFiles(ctx, objectIDs, password any) *gomock.Call {
+// 	mr.mock.ctrl.T.Helper()
+// 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFiles", reflect.TypeOf((*MockS3)(nil).GetFiles), ctx, objectIDs, password)
+// }
 
 // Store mocks base method.
 func (m *MockS3) Store(ctx context.Context, owner string, data []byte, isPassword map[string]string) (*models.Pasta, error) {

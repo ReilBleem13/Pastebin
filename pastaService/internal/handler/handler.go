@@ -24,22 +24,36 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
-	auth := router.Group("/")
-	auth.Use(h.AuthMiddleWare())
+	router.Use(gin.Recovery(), h.Logger())
+
+	router.GET("/health", func(c *gin.Context) {
+		c.String(200, "OK")
+	})
+
+	api := router.Group("/")
+	api.Use(h.AuthMiddleWare())
 	{
-		auth.GET("/receive/:hash", h.AccessByKeyAuth(), h.GetPastaHandler)
-		auth.POST("/create", h.AccessPostAuth(), h.CreatePastaHandler) // обработк ошибки при пустом json
-		auth.PUT("/update/:hash", h.RequireAuth(), h.AccessByKeyAuth(), h.UpdateHandler)
-		auth.DELETE("/delete/:hash", h.AccessByKeyAuth(), h.DeletePastaHandler)
+		api.POST("/create", h.AccessCreate(), h.CreatePastaHandler)
+		api.GET("/receive/:hash", h.AccessHash(), h.GetPastaHandler)
+		api.DELETE("/delete/:hash", h.AccessHash(), h.DeletePastaHandler)
 
-		auth.GET("/paginate", h.PaginatePublicHandler)
-		auth.GET("/paginate/me", h.RequireAuth(), h.PaginateForUserHandler)
-		auth.GET("/search", h.SearchHandler)
+		api.GET("/paginate", h.PaginatePublicHandler)
+		api.GET("/search", h.SearchHandler)
 
-		auth.POST("/favorite/create/:hash", h.RequireAuth(), h.AccessByKeyAuth(), h.CreateFavorite)
-		auth.GET("/favorite/:favorite_id", h.RequireAuth(), h.GetFavorite)
-		auth.DELETE("/favorite/:favorite_id", h.RequireAuth(), h.DeleteFavorite)
-		auth.GET("/favorite/paginate", h.RequireAuth(), h.PaginateFavorites)
+		private := api.Group("/")
+		private.Use(h.RequireAuth())
+		{
+			private.PUT("/update/:hash", h.UpdateHandler)
+			private.GET("/paginate/me", h.PaginateForUserHandler)
+
+			favorites := private.Group("/favorite")
+			{
+				favorites.GET("/:favorite_id", h.GetFavorite)
+				favorites.DELETE("/:favorite_id", h.DeleteFavorite)
+				favorites.POST("/create/:hash", h.CreateFavorite)
+				favorites.GET("/paginate", h.PaginateFavorites)
+			}
+		}
 	}
 	return router
 }

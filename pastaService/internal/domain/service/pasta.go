@@ -30,5 +30,4 @@ type Pasta interface {
 	DeleteFavorite(ctx context.Context, userID, favoriteID int) error
 
 	GetVisibility(ctx context.Context, hash string) (string, error)
-	GetUserID(ctx context.Context, hash string) (int, error)
 }

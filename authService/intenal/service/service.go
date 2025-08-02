@@ -63,7 +63,7 @@ func (a *AuthService) CheckLogin(ctx context.Context, request *dto.LoginUser) er
 	return nil
 }
 
-func (a *AuthService) GenerateToken(ctx context.Context, request *dto.LoginUser) (string, error) {
+func (a *AuthService) GenerateToken(ctx context.Context, request *dto.LoginUser) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -74,12 +74,12 @@ func (a *AuthService) GenerateToken(ctx context.Context, request *dto.LoginUser)
 		return err
 	}, retry.IsRetryableErrorDatabase)
 	if err != nil {
-		return "", fmt.Errorf("failed to get user id by email: %w", err)
+		return "", "", fmt.Errorf("failed to get user id by email: %w", err)
 	}
-	accessToke, err := jwt.GenerateToken(id)
+	accessToken, refreshToken, err := jwt.GenerateTokens(id)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate token: %w", err)
+		return "", "", fmt.Errorf("failed to generate token: %w", err)
 	}
 
-	return accessToke, nil
+	return accessToken, refreshToken, nil
 }

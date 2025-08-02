@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	customerrors "pastebin/internal/errors"
 	"pastebin/pkg/dto"
 	"strconv"
@@ -45,12 +44,11 @@ func (h *Handler) CreatePastaHandler(c *gin.Context) {
 		return
 	}
 
-	h.logger.Debug(fmt.Sprintf("User:%d successfully uploaded file", userID))
 	c.JSON(201, dto.SuccessCreatePastaResponse{
 		Status:  201,
 		Message: "File uploaded successfully",
 		Link:    urlForGet + pasta.Hash,
-		Metadata: dto.PastaMetadataDTO{
+		Metadata: dto.MetadataResponse{
 			Key:        pasta.ObjectID,
 			Size:       pasta.Size,
 			Language:   pasta.Language,

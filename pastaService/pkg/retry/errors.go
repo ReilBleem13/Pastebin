@@ -5,7 +5,6 @@ import (
 	"net"
 
 	"github.com/lib/pq"
-	"github.com/minio/minio-go/v7"
 )
 
 func IsRetryableErrorDatabase(err error) bool {
@@ -27,44 +26,6 @@ func IsRetryableErrorDatabase(err error) bool {
 			"08007": // transaction_resolution_unknown
 			return true
 		}
-	}
-
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
-}
-
-func IsRetryableErrorMinio(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	var minioErr minio.ErrorResponse
-	if errors.As(err, &minioErr) {
-		switch minioErr.Code {
-		case "SlowDown",
-			"RequestTimeout",
-			"InternalError",
-			"ServiceUnavailable":
-			return true
-		}
-	}
-
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
-}
-
-func IsRetryableErrorElastic(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
-}
-
-func IsRetryableErrorRedis(err error) bool {
-	if err == nil {
-		return false
 	}
 
 	var netErr net.Error

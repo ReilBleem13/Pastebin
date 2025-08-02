@@ -11,8 +11,9 @@ const configFileName string = "config.yml"
 
 type Config struct {
 	App struct {
-		Mode string `yaml:"mode"`
-		Port string `yaml:"port"`
+		Mode      string `yaml:"mode"`
+		Port      string `yaml:"port"`
+		JWTSecret string `yaml:"jwt_secret"`
 	} `yaml:"app"`
 
 	Storage StorageConfig `yaml:"storage"`
