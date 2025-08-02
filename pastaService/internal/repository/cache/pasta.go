@@ -10,14 +10,14 @@ import (
 	"pastebin/internal/models"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type pastaCache struct {
-	redis *redis.Client
+	redis redis.UniversalClient
 }
 
-func NewPastaCache(redis *redis.Client) domain.PastaCache {
+func NewPastaCache(redis redis.UniversalClient) domain.PastaCache {
 	return &pastaCache{redis: redis}
 }
 
@@ -76,12 +76,20 @@ func (r *pastaCache) AddText(ctx context.Context, hash string, text []byte) erro
 	return r.redis.Set(ctx, textPrefix+hash, text, textCacheTTL).Err()
 }
 
+func (r *pastaCache) DeleteText(ctx context.Context, hash string) error {
+	return r.redis.Del(ctx, textPrefix+hash).Err()
+}
+
 func (r *pastaCache) AddMeta(ctx context.Context, pasta *models.Pasta) error {
 	pastaJSON, err := json.Marshal(pasta)
 	if err != nil {
 		return err
 	}
 	return r.redis.Set(ctx, metaPrefix+pasta.Hash, pastaJSON, metaCacheTTL).Err()
+}
+
+func (r *pastaCache) DeleteMeta(ctx context.Context, hash string) error {
+	return r.redis.Del(ctx, metaPrefix+hash).Err()
 }
 
 func (r *pastaCache) GetText(ctx context.Context, keyText string) (string, error) {
@@ -111,4 +119,17 @@ func (r *pastaCache) GetMeta(ctx context.Context, keyMeta string) (*models.Pasta
 		return nil, err
 	}
 	return &metadata, nil
+}
+
+func (r *pastaCache) DeleteAll(ctx context.Context, hash string) error {
+	if err := r.DeleteViews(ctx, hash); err != nil {
+		return fmt.Errorf("failed to delete views: %w", err)
+	}
+	if err := r.DeleteText(ctx, hash); err != nil {
+		return fmt.Errorf("failed to delete text: %w", err)
+	}
+	if err := r.DeleteMeta(ctx, hash); err != nil {
+		return fmt.Errorf("failed to delete meta: %w", err)
+	}
+	return nil
 }

@@ -9,9 +9,9 @@ import (
 	"pastebin/pkg/workerpool"
 
 	elastic "github.com/elastic/go-elasticsearch/v8"
-	"github.com/go-redis/redis/v8"
 	"github.com/jmoiron/sqlx"
 	"github.com/minio/minio-go/v7"
+	"github.com/redis/go-redis/v9"
 )
 
 type Repository struct {
@@ -21,7 +21,7 @@ type Repository struct {
 	Elastic  domain.Elastic
 }
 
-func NewRepository(db *sqlx.DB, redis *redis.Client, minio *minio.Client,
+func NewRepository(db *sqlx.DB, redis redis.UniversalClient, minio *minio.Client,
 	elc *elastic.Client, pool *workerpool.WorkerPool, bucket string, index string) *Repository {
 	return &Repository{
 		Database: database.NewDatabase(db),

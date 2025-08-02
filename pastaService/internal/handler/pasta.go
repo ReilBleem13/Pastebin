@@ -2,12 +2,13 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	customerrors "pastebin/internal/errors"
 	"pastebin/pkg/dto"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/theartofdevel/logging"
 )
 
 const (
@@ -15,26 +16,22 @@ const (
 )
 
 func (h *Handler) CreatePastaHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() CreatePastaHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	req, err := h.GetRequest(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting request from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting request from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
 	ctx := c.Request.Context()
+	h.logger.Debug("Calling Create Method")
 	pasta, err := h.servises.Pasta.Create(ctx, req, userID)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrInvalidExpirationFormat) ||
@@ -43,12 +40,12 @@ func (h *Handler) CreatePastaHandler(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		h.logger.Errorf("internal server error during pasta creation: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during pasta creation", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
-	h.logger.Infof("User:%d successfully uploaded file", userID)
+	h.logger.Debug(fmt.Sprintf("User:%d successfully uploaded file", userID))
 	c.JSON(201, dto.SuccessCreatePastaResponse{
 		Status:  201,
 		Message: "File uploaded successfully",
@@ -65,11 +62,6 @@ func (h *Handler) CreatePastaHandler(c *gin.Context) {
 }
 
 func (h *Handler) GetPastaHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() GetPastaHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	var passwordRequest dto.Password
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.BindJSON(&passwordRequest); err != nil {
@@ -79,19 +71,17 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 	}
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 	visibility, err := h.GetVisibility(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting visibility from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting visibility from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
-	h.logger.Info("before hash")
 	hash := c.Param("hash")
-	h.logger.Infof("after hash: %s", hash)
 
 	hasMetadata, err := strconv.ParseBool(c.DefaultQuery("metadata", "false"))
 	if err != nil {
@@ -100,24 +90,26 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	h.logger.Debug("Calling Permission Method")
 	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
 	if errors.Is(err, customerrors.ErrPastaNotFound) {
-		c.JSON(404, gin.H{"error": err.Error()})
+		c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		return
 	} else if errors.Is(err, customerrors.ErrNoAccess) ||
 		errors.Is(err, customerrors.ErrWrongPassword) {
-		c.JSON(403, gin.H{"error": err.Error()})
+		c.JSON(403, gin.H{"error": customerrors.ErrWrongPassword.Error()})
 		return
 	} else if err != nil {
-		h.logger.Errorf("internal server error during checking permission: %v", err)
-		c.JSON(500, gin.H{"error": "internal error occured while checking permission"})
+		h.logger.Error("Internal server error during checking permission", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
-	pasta, err := h.servises.Pasta.Get(ctx, hash, hasMetadata)
+	h.logger.Debug("Calling Get Method")
+	pasta, err := h.servises.Pasta.Get(ctx, hash, hasMetadata, true)
 	if err != nil {
-		h.logger.Errorf("internal server error during getting creation: %v", err)
-		c.JSON(500, gin.H{"error": "internal error occured while getting the pasta"})
+		h.logger.Error("Internal server error during getting creation", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
@@ -130,11 +122,6 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 }
 
 func (h *Handler) DeletePastaHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() DeletePastaHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	var passwordRequest dto.Password
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.BindJSON(&passwordRequest); err != nil {
@@ -144,53 +131,50 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 	}
 	visibility, err := h.GetVisibility(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting visibility from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting visibility from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
 	hash := c.Param("hash")
 	ctx := c.Request.Context()
 
+	h.logger.Debug("Calling Permission Method")
 	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(404, gin.H{"error": err.Error()})
+			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		} else if errors.Is(err, customerrors.ErrNoAccess) ||
 			errors.Is(err, customerrors.ErrWrongPassword) {
 			c.JSON(403, gin.H{"error": err.Error()})
 		} else {
-			h.logger.Errorf("internal server error during checking permission: %v", err)
-			c.JSON(500, gin.H{"error": "internal error occured while checking permission"})
+			h.logger.Error("Internal server error during checking permission", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
 
+	h.logger.Debug("Calling Delete Method")
 	if err := h.servises.Pasta.Delete(ctx, hash); err != nil {
 		if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(404, gin.H{"error": "pasta not found"})
+			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		} else {
-			h.logger.Errorf("internal server error during deleting pasta: %v", err)
-			c.JSON(500, gin.H{"error": "internal error occured while deleting pasta"})
+			h.logger.Error("Internal server error during deleting pasta", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
-	c.JSON(200, gin.H{"status": "deleted"})
+	c.JSON(200, gin.H{"Status": "Deleted"})
 }
 
 func (h *Handler) PaginatePublicHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() PaginatePublicHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	rawLimit := c.Query("limit")
 	rawPage := c.Query("page")
 
@@ -201,15 +185,16 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	h.logger.Debug("Calling PaginateOnlyPublic Method")
 	result, err := h.servises.Pasta.PaginateOnlyPublic(ctx, rawLimit, rawPage, hasMetadata)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
-			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5 and page more than 0."})
+			c.JSON(400, gin.H{"error": customerrors.ErrInvalidQueryParament.Error()})
 		} else if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(200, gin.H{"status": "notes not found"})
+			c.JSON(200, gin.H{"status": customerrors.ErrPastaNotFound.Error()})
 		} else {
-			h.logger.Errorf("internal server error during paginating public: %v", err)
-			c.JSON(500, gin.H{"error": "internal error occured while paginating public"})
+			h.logger.Error("Internal server error during paginating public", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
@@ -218,18 +203,13 @@ func (h *Handler) PaginatePublicHandler(c *gin.Context) {
 }
 
 func (h *Handler) PaginateForUserHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() PaginateForUserHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	rawLimit := c.Query("limit")
 	rawPage := c.Query("page")
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
@@ -243,12 +223,12 @@ func (h *Handler) PaginateForUserHandler(c *gin.Context) {
 	result, err := h.servises.Pasta.PaginateForUserByID(ctx, rawLimit, rawPage, userID, hasMetadata)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
-			c.JSON(400, gin.H{"error": "invalid request, limit should be more than 5 and page more than 0."})
+			c.JSON(400, gin.H{"error": customerrors.ErrInvalidQueryParament.Error()})
 		} else if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(200, gin.H{"status": "notes not found"})
+			c.JSON(200, gin.H{"status": customerrors.ErrPastaNotFound.Error()})
 		} else {
-			h.logger.Errorf("internal server error during paginating by userID: %v", err)
-			c.JSON(500, gin.H{"error": "internal error occured while paginating by userID"})
+			h.logger.Error("Internal server error during paginating by userID", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
@@ -258,23 +238,19 @@ func (h *Handler) PaginateForUserHandler(c *gin.Context) {
 }
 
 func (h *Handler) SearchHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() SearchHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	word := c.Query("search")
 	ctx := c.Request.Context()
 
+	h.logger.Debug("Calling Search Method")
 	result, err := h.servises.Pasta.Search(ctx, word)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrEmptySearchField) {
-			c.JSON(404, gin.H{"status": "empty search field"})
+			c.JSON(404, gin.H{"status": customerrors.ErrEmptySearchField.Error()})
 		} else if errors.Is(err, customerrors.ErrEmptySearchResult) {
-			c.JSON(200, gin.H{"status": "result is empty"})
+			c.JSON(200, gin.H{"status": customerrors.ErrEmptySearchResult.Error()})
 		} else {
-			h.logger.Errorf("internal server error during searching: %v", err)
-			c.JSON(500, gin.H{"status": "internal server error"})
+			h.logger.Error("Internal server error during searching", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"status": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
@@ -286,11 +262,6 @@ func (h *Handler) SearchHandler(c *gin.Context) {
 }
 
 func (h *Handler) UpdateHandler(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() UpdateHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	var updateRequest dto.UpdateRequest
 	if err := c.ShouldBindJSON(&updateRequest); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -299,15 +270,15 @@ func (h *Handler) UpdateHandler(c *gin.Context) {
 
 	visibility, err := h.GetVisibility(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting visibility from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting visibility from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
@@ -315,24 +286,26 @@ func (h *Handler) UpdateHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	h.logger.Debug("Calling Permission Method")
 	err = h.servises.Pasta.Permission(ctx, hash, updateRequest.Password, visibility, userID)
 	if errors.Is(err, customerrors.ErrPastaNotFound) {
-		c.JSON(404, gin.H{"error": err.Error()})
+		c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		return
 	} else if errors.Is(err, customerrors.ErrNoAccess) ||
 		errors.Is(err, customerrors.ErrWrongPassword) {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	} else if err != nil {
-		h.logger.Errorf("internal server error during checking permission: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during checking permission", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
+	h.logger.Debug("Calling Update Method")
 	metadata, err := h.servises.Pasta.Update(ctx, []byte(updateRequest.NewText), hash)
 	if err != nil {
-		h.logger.Errorf("internal server error duting updating: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error duting updating", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 	}
 
 	c.JSON(200, dto.SuccessUpdatedPastaResponse{
@@ -343,24 +316,19 @@ func (h *Handler) UpdateHandler(c *gin.Context) {
 }
 
 func (h *Handler) CreateFavorite(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() CreateFavoriteHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	ctx := c.Request.Context()
 
 	visibility, err := h.GetVisibility(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting visibility from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting visibility from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
@@ -369,30 +337,25 @@ func (h *Handler) CreateFavorite(c *gin.Context) {
 	err = h.servises.Pasta.Favorite(ctx, hash, visibility, userID)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrNotAllowed) {
-			c.JSON(400, gin.H{"error": "not allowed to add private pasta"})
+			c.JSON(400, gin.H{"error": customerrors.ErrNotAllowed.Error()})
 		} else if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(404, gin.H{"error": "pasta not found"})
+			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		} else {
-			h.logger.Errorf("internal server error during create favorite: %v", err)
-			c.JSON(500, gin.H{"error": "internal server error"})
+			h.logger.Error("Internal server error during create favorite", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
-	c.JSON(200, gin.H{"status": "successfully created"})
+	c.JSON(200, gin.H{"Status": "Successfully created"})
 }
 
 func (h *Handler) GetFavorite(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() GetFavoriteHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	ctx := c.Request.Context()
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
@@ -412,12 +375,12 @@ func (h *Handler) GetFavorite(c *gin.Context) {
 	pasta, err := h.servises.Pasta.GetFavorite(ctx, userID, favoriteID, withMetadata)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(404, gin.H{"error": "pasta not found"})
+			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		} else if errors.Is(err, customerrors.ErrNotAllowed) {
-			c.JSON(400, gin.H{"error": "request from invalid user"})
+			c.JSON(400, gin.H{"error": customerrors.ErrNotAllowed.Error()})
 		} else {
-			h.logger.Errorf("internal server error during get favorite: %v", err)
-			c.JSON(500, gin.H{"error": "internal server error"})
+			h.logger.Error("Internal server error during get favorite", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
@@ -431,17 +394,12 @@ func (h *Handler) GetFavorite(c *gin.Context) {
 }
 
 func (h *Handler) DeleteFavorite(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() DeleteFavoriteHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	ctx := c.Request.Context()
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
@@ -455,24 +413,19 @@ func (h *Handler) DeleteFavorite(c *gin.Context) {
 	err = h.servises.Pasta.DeleteFavorite(ctx, userID, favoriteID)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(404, gin.H{"error": "pasta not found"})
+			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		} else if errors.Is(err, customerrors.ErrNotAllowed) {
-			c.JSON(400, gin.H{"error": "request from invalid user"})
+			c.JSON(400, gin.H{"error": customerrors.ErrNotAllowed.Error()})
 		} else {
-			h.logger.Errorf("internal server error during delete favorite: %v", err)
-			c.JSON(500, gin.H{"error": "internal server error"})
+			h.logger.Error("Internal server error during delete favorite", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
-	c.JSON(200, gin.H{"status": "successfully deleted"})
+	c.JSON(200, gin.H{"Status": "Successfully deleted"})
 }
 
 func (h *Handler) PaginateFavorites(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() PaginateFavoriteHandler. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	ctx := c.Request.Context()
 
 	rawLimit := c.Query("limit")
@@ -486,20 +439,20 @@ func (h *Handler) PaginateFavorites(c *gin.Context) {
 
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Errorf("internal server error during getting userID from context: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 
 	paginatedPasta, err := h.servises.Pasta.PaginateFavorite(ctx, rawLimit, rawPage, userID, withMetadata)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrInvalidQueryParament) {
-			c.JSON(400, gin.H{"err": err.Error()})
+			c.JSON(400, gin.H{"err": customerrors.ErrInvalidQueryParament.Error()})
 		} else if errors.Is(err, customerrors.ErrPastaNotFound) {
 			c.JSON(404, gin.H{"err": customerrors.ErrPastaNotFound.Error()})
 		} else {
-			h.logger.Errorf("internal server error during paginate favorite: %v", err)
-			c.JSON(500, gin.H{"err": "internal server error"})
+			h.logger.Error("Internal server error during paginate favorite", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"err": customerrors.ErrInternal.Error()})
 		}
 		return
 	}

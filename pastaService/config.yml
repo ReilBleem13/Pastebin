@@ -1,4 +1,5 @@
-listen:
+app:
+  mode: debug # debug or prod
   port: 10002
 
 storage:
@@ -10,19 +11,55 @@ storage:
   sslmode: disable
 
 minio:
-  host: minio:9000
-  bucket: chukki
-  rootuser: root
-  password: minio_password
+  addr: minio1:9000 # кворум на большее
+  bucket: pastas
+  root_user: root
+  root_password: root_password
+  max_idle_conns: 100
+  idle_conn_timeout: 30s
+  max_retries: 3
   ssl: false
 
 redis:
-  host: redis:6379
+  mode: cluster # cluster or standalone
+  addrs: 
+    - redis-node-1:7000
+    - redis-node-2:7001
+    - redis-node-3:7002
+    - redis-node-4:7003
+    - redis-node-5:7004
+    - redis-node-6:7005
+  password: "qwerty"
+  dial_timeout: 5s
+  read_timeout: 5s
+  write_timeout: 5s
+  pool_size: 50
+  max_retries: 3
 
 elastic:
-  addresses:
-    - http://elasticsearch:9200
+  addrs:
+    - http://elasticsearch1:9200
+    - http://elasticsearch2:9200
+    - http://elasticsearch3:9200
+  username: root
+  password: root_password
+  retry_on_status: 
+    - 502
+    - 503
+    - 504
+  max_retries: 3
+  compress_request_body: true
   index: pastas
 
 kafka:
-  address: kafka:9092
+  addrs: 
+    - kafka1:9092
+    - kafka2:9092
+    - kafka3:9092
+  acks: all
+  retries: 5
+  enable_idempotence: true
+  batch_num_messages: 10000
+  max_in_flight_requests_per_connection: 5
+  delivery_timeout_ms: 30000
+  request_timeout_ms: 10000

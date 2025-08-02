@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/theartofdevel/logging"
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 
 func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		h.logger.Debug("Calling AuthMiddleware")
 		header := c.GetHeader(authorizationHeader)
 		if header == "" || !strings.HasPrefix(header, tokenPrefix) {
 			c.Next()
@@ -33,20 +35,20 @@ func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 		claims, err := utils.VerifyAccessToken(token)
 		if err != nil {
 			if errors.Is(err, customerrors.ErrTokenExpired) {
-				c.JSON(401, gin.H{"error": "token has expired"})
+				c.JSON(401, gin.H{"error": customerrors.ErrTokenExpired.Error()})
 				c.Abort()
 				return
 			}
 
 			if errors.Is(err, customerrors.ErrInvalidToken) ||
 				errors.Is(err, customerrors.ErrUnexpectedSignMethod) {
-				c.JSON(401, gin.H{"error": "invalid token"})
+				c.JSON(401, gin.H{"error": customerrors.ErrInvalidToken.Error()})
 				c.Abort()
 				return
 			}
 
-			h.logger.Errorf("unexpected error during token verification: %v", err)
-			c.JSON(500, customerrors.ErrInternal)
+			h.logger.Error("Unexpected error during token verification", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 			c.Abort()
 			return
 		}
@@ -58,9 +60,10 @@ func (h *Handler) AuthMiddleWare() gin.HandlerFunc {
 
 func (h *Handler) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		h.logger.Debug("Calling RequireAuth")
 		_, exists := c.Get(userCtx)
 		if !exists {
-			c.JSON(401, gin.H{"error": "unauthorized"})
+			c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
 			c.Abort()
 			return
 		}
@@ -68,12 +71,13 @@ func (h *Handler) RequireAuth() gin.HandlerFunc {
 	}
 }
 
-func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
+func (h *Handler) AccessPostAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		h.logger.Debug("Calling AccessPostAuth")
 		if c.Request.Method == http.MethodPost {
 			var req dto.RequestCreatePasta
 			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(400, gin.H{"error": "invalid request"})
+				c.JSON(400, gin.H{"error": customerrors.ErrInvalidRequst.Error()})
 				c.Abort()
 				return
 			}
@@ -82,7 +86,7 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 			if strings.ToLower(req.Visibility) == visibilityPrivate {
 				_, exists := c.Get(userCtx)
 				if !exists {
-					c.JSON(401, gin.H{"error": "unathorized: create private pastas require login"})
+					c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
 					c.Abort()
 					return
 				}
@@ -93,18 +97,20 @@ func (h *Handler) AccessPostMiddleware() gin.HandlerFunc {
 	}
 }
 
-func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
+func (h *Handler) AccessByKeyAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		h.logger.Debug("Calling AccessByKeyAuth")
+
 		hash := c.Param("hash")
 		ctx := c.Request.Context()
 
 		visibility, err := h.servises.Pasta.GetVisibility(ctx, hash)
 		if err != nil {
 			if errors.Is(err, customerrors.ErrPastaNotFound) {
-				c.JSON(404, gin.H{"error": "pasta not found"})
+				c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 			} else {
-				h.logger.Errorf("Internal error on GetVisibility: %v", err)
-				c.JSON(500, gin.H{"error": "internal server error"})
+				h.logger.Error("Internal error on GetVisibility", logging.ErrAttr(err))
+				c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 			}
 			c.Abort()
 			return
@@ -113,13 +119,13 @@ func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
 		if c.Request.Method == http.MethodPut {
 			userID, err := h.servises.Pasta.GetUserID(ctx, hash)
 			if err != nil {
-				h.logger.Errorf("Internal error on GetVisibility: %v", err)
-				c.JSON(500, gin.H{"error": "internal server error"})
+				h.logger.Error("Internal error on GetVisibility", logging.ErrAttr(err))
+				c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 				c.Abort()
 				return
 			}
 			if userID == 0 {
-				c.JSON(400, gin.H{"error": "should edit pastas from authorized user"})
+				c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
 				c.Abort()
 				return
 			}
@@ -130,7 +136,7 @@ func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
 		if visibility == visibilityPrivate {
 			_, exists := c.Get(userCtx)
 			if !exists {
-				c.JSON(401, gin.H{"error": "unauthorized: private pasta"})
+				c.JSON(401, gin.H{"error": customerrors.ErrUserNotAuthenticated.Error()})
 				c.Abort()
 				return
 			}
@@ -139,48 +145,43 @@ func (h *Handler) AccessByKeyMiddleware() gin.HandlerFunc {
 	}
 }
 
-// получение userID c context
 func (h *Handler) GetUserID(c *gin.Context) (int, error) {
 	rawUserID, exists := c.Get(userCtx)
 	if !exists {
-		return 0, customerrors.ErrUserNotAuthenticated
-	} //подумать
+		return 0, nil
+	}
 
 	userID, ok := rawUserID.(int)
 	if !ok {
-		h.logger.Errorf("invalid type for userCtx: %T", userID)
+		h.logger.Error("Invalid type for userCtx")
 		return 0, customerrors.ErrInternal
 	}
 	return userID, nil
 }
 
-// получение request с context
 func (h *Handler) GetRequest(c *gin.Context) (*dto.RequestCreatePasta, error) {
 	rawRequest, exists := c.Get(requestCtx)
 	if !exists {
-		h.logger.Error("critical: requestCtx not found in context")
-		return nil, customerrors.ErrInternal
+		return nil, nil
 	}
 
 	request, ok := rawRequest.(dto.RequestCreatePasta)
 	if !ok {
-		h.logger.Errorf("invalid type for requestCtx: %T", request)
+		h.logger.Error("Invalid type for requestCtx")
 		return nil, customerrors.ErrInternal
 	}
 	return &request, nil
 }
 
-// получение visibility c context
 func (h *Handler) GetVisibility(c *gin.Context) (string, error) {
 	rawVisibility, exists := c.Get(visibilityCtx)
 	if !exists {
-		h.logger.Error("critical: visibilityCtx not found in context")
-		return "", customerrors.ErrInternal
+		return "", nil
 	}
 
 	visibility, ok := rawVisibility.(string)
 	if !ok {
-		h.logger.Errorf("invalid type for requestCtx: %T", visibility)
+		h.logger.Error("invalid type for requestCtx")
 		return "", customerrors.ErrInternal
 	}
 	return visibility, nil

@@ -18,8 +18,12 @@ type PastaCache interface {
 	GetText(ctx context.Context, keyData string) (string, error)
 	GetMeta(ctx context.Context, keyMeta string) (*models.Pasta, error)
 
+	DeleteAll(ctx context.Context, hash string) error
+	DeleteViews(ctx context.Context, hash string) error
+	DeleteText(ctx context.Context, hash string) error
+	DeleteMeta(ctx context.Context, hash string) error
+
 	CreateViews(ctx context.Context, hash string, expiration *time.Duration) error
 	IncrViews(ctx context.Context, hash string) (int, error)
 	GetViews(ctx context.Context, hash string) (string, error)
-	DeleteViews(ctx context.Context, hash string) error
 }

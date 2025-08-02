@@ -2,10 +2,10 @@ package retry
 
 import (
 	"context"
-	"pastebin/pkg/logging"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/theartofdevel/logging"
 )
 
 type RetryFunc func() error
@@ -52,7 +52,7 @@ func Retry(ctx context.Context, fn RetryFunc, isRetryable func(error) bool, cfg 
 		},
 		backoffCtx,
 		func(err error, delay time.Duration) {
-			logger.Infof("[retry][%s] attempt #%d failed: %v - retrying in %v", cfg.Component, attempt, err, delay)
+			logger.Debug("[retry]", logging.StringAttr("[component]", cfg.Component), logging.IntAttr("attempt", attempt), logging.ErrAttr(err), logging.StringAttr("delay", delay.String()))
 		},
 	)
 }

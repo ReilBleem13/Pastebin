@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"pastebin/internal/config"
+	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
@@ -16,16 +18,25 @@ type Producer struct {
 	producer *kafka.Producer
 }
 
-func NewProducer(address string) (*Producer, error) {
-	fmt.Println("Kafka address:", address)
+func NewProducer(ctx context.Context, cfg config.KafkaConfig, transactionalID string) (*Producer, error) {
 	conf := &kafka.ConfigMap{
-		"bootstrap.servers": address,
-		"acks":              "1",
-		"retries":           3,
+		"bootstrap.servers":                     strings.Join(cfg.Address, ","),
+		"acks":                                  cfg.Acks,
+		"retries":                               cfg.Retries,
+		"enable.idempotence":                    cfg.EnableIdempotence,
+		"batch.num.messages":                    cfg.BatchNumMessages,
+		"transactional.id":                      transactionalID,
+		"max.in.flight.requests.per.connection": cfg.MaxInFlightRequestsPerConn,
+		"delivery.timeout.ms":                   cfg.DeliveryTimeoutMs,
+		"request.timeout.ms":                    cfg.RequestTimeoutMs,
 	}
 	p, err := kafka.NewProducer(conf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new producer: %v", err)
+	}
+
+	if err := p.InitTransactions(ctx); err != nil {
+		return nil, fmt.Errorf("failed to init transactions: %w", err)
 	}
 	return &Producer{producer: p}, nil
 }
@@ -44,21 +55,37 @@ func (p *Producer) Produce(ctx context.Context, event Event) error {
 		Value: value,
 		Key:   []byte(event.Key()),
 	}
-	kafkaChan := make(chan kafka.Event, 1)
-	if err := p.producer.Produce(msg, kafkaChan); err != nil {
+
+	if err := p.producer.BeginTransaction(); err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	deliveryChan := make(chan kafka.Event, 1)
+	if err := p.producer.Produce(msg, deliveryChan); err != nil {
+		p.producer.AbortTransaction(ctx)
 		return fmt.Errorf("produce failed: %w", err)
 	}
+
 	select {
-	case ev := <-kafkaChan:
+	case ev := <-deliveryChan:
 		m, ok := ev.(*kafka.Message)
 		if !ok {
+			p.producer.AbortTransaction(ctx)
 			return fmt.Errorf("unexpected event type")
 		}
 		if m.TopicPartition.Error != nil {
+			p.producer.AbortTransaction(ctx)
 			return fmt.Errorf("delivary failed: %w", m.TopicPartition.Error)
 		}
 	case <-ctx.Done():
+		p.producer.AbortTransaction(ctx)
 		return ctx.Err()
+	}
+	close(deliveryChan)
+
+	if err := p.producer.CommitTransaction(ctx); err != nil {
+		p.producer.AbortTransaction(ctx)
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
 }

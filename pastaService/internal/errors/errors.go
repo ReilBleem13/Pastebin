@@ -6,8 +6,10 @@ var (
 	ErrInvalidLanguageFormat   = errors.New("invalid language format")
 	ErrInvalidVisibilityFormat = errors.New("invalid visibility format")
 	ErrInvalidExpirationFormat = errors.New("invalid expiration format")
-	ErrTextIsEmpty             = errors.New("text is empty")
-	ErrInvalidQueryParament    = errors.New("invalid query parament")
+
+	ErrTextIsEmpty          = errors.New("text is empty")
+	ErrInvalidQueryParament = errors.New("invalid query parament")
+	ErrInvalidRequst        = errors.New("invalid request")
 
 	ErrFailedFetchPassword = errors.New("failed to fetch password hash")
 	ErrPasswordRequired    = errors.New("password is required")

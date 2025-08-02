@@ -20,7 +20,6 @@ import (
 	"pastebin/internal/service"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
-	"pastebin/pkg/logging"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/theartofdevel/logging"
 )
 
 var (
@@ -233,7 +233,7 @@ func setupTestApp(env *TestEnv) (*TestApp, error) {
 
 	repos := repository.NewRepository(postgres.Client(), redis.Client(), minio.Client(),
 		elastiCli.Client(), minio.Pool(), env.MinioBucket, "") // ПУСТОЙ ИНДЕКС ПУСТОЙ ИНДЕКС ПУСТОЙ ИНДЕКС
-	logger := logging.GetLogger()
+	logger := logging.L(ctx) // <-временно
 	services := service.NewService(repos, logger)
 	h := handler.NewHandler(services, logger)
 
@@ -241,9 +241,9 @@ func setupTestApp(env *TestEnv) (*TestApp, error) {
 	auth := r.Group("/")
 	auth.Use(h.AuthMiddleWare())
 	{
-		auth.POST("/create", h.AccessPostMiddleware(), h.CreatePastaHandler)
-		auth.GET("/receive/:objectID", h.AccessByKeyMiddleware(), h.GetPastaHandler)
-		auth.DELETE("/delete/:objectID", h.AccessByKeyMiddleware(), h.DeletePastaHandler)
+		auth.POST("/create", h.AccessPostAuth(), h.CreatePastaHandler)
+		auth.GET("/receive/:objectID", h.AccessByKeyAuth(), h.GetPastaHandler)
+		auth.DELETE("/delete/:objectID", h.AccessByKeyAuth(), h.DeletePastaHandler)
 	}
 	return &TestApp{
 		Engine:   r,

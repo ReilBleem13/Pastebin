@@ -2,21 +2,19 @@ package scanner
 
 import (
 	"context"
+	"fmt"
 	domainrepo "pastebin/internal/domain/repository"
 	domainservice "pastebin/internal/domain/service"
-	"pastebin/pkg/logging"
 	"time"
 )
 
 type ScannerService struct {
-	db     domainrepo.ScannerDatabase
-	logger *logging.Logger
+	db domainrepo.ScannerDatabase
 }
 
-func NewScannerService(repo domainrepo.ScannerDatabase, logger *logging.Logger) domainservice.DBScanner {
+func NewScannerService(repo domainrepo.ScannerDatabase) domainservice.DBScanner {
 	return &ScannerService{
-		db:     repo,
-		logger: logger,
+		db: repo,
 	}
 }
 
@@ -24,5 +22,9 @@ func (s *ScannerService) GetExpiredPastas(ctx context.Context) ([]string, error)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	return s.db.GetExpiredPastas(ctx)
+	objectIDs, err := s.db.GetExpiredPastas(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get objectIDs: %w", err)
+	}
+	return objectIDs, nil
 }

@@ -3,15 +3,17 @@ package service
 import (
 	domain "pastebin/internal/domain/service"
 	"pastebin/internal/repository"
-	"pastebin/pkg/logging"
+
+	"github.com/theartofdevel/logging"
+	"golang.org/x/net/context"
 )
 
 type Service struct {
 	Pasta domain.Pasta
 }
 
-func NewService(repo *repository.Repository, logger *logging.Logger) *Service {
+func NewService(ctx context.Context, repo *repository.Repository) *Service {
 	return &Service{
-		Pasta: NewPastaService(repo, logger),
+		Pasta: NewPastaService(repo, logging.L(ctx)),
 	}
 }

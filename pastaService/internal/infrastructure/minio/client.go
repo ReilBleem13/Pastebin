@@ -3,13 +3,14 @@ package minio
 import (
 	"context"
 	"fmt"
-	"log"
+	"net/http"
 	"pastebin/internal/config"
 	"pastebin/pkg/workerpool"
 	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/theartofdevel/logging"
 )
 
 type minioClient struct {
@@ -21,16 +22,15 @@ func NewMinioClient(ctx context.Context, cfg config.MinioConfig, workers int) (*
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	client, err := minio.New(
-		cfg.Host,
-		&minio.Options{
-			Creds: credentials.NewStaticV4(
-				cfg.Rootuser,
-				cfg.Password,
-				"",
-			),
-			Secure: cfg.Ssl,
+	client, err := minio.New(cfg.Addr, &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.User, cfg.Password, ""),
+		Secure: cfg.Ssl,
+		Transport: &http.Transport{
+			MaxIdleConns:    cfg.MaxIdleConns,
+			IdleConnTimeout: cfg.IdleConnTimeout,
 		},
+		MaxRetries: cfg.MaxRetries,
+	},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minio client: %w", err)
@@ -49,6 +49,7 @@ func NewMinioClient(ctx context.Context, cfg config.MinioConfig, workers int) (*
 	}
 	pool := workerpool.NewWorkerPool(workers)
 	pool.Start()
+
 	return &minioClient{client: client, pool: pool}, nil
 }
 
@@ -63,17 +64,17 @@ func (m *minioClient) Close(ctx context.Context) {
 	done := make(chan struct{})
 
 	go func() {
-		log.Printf("stopping worker pool...")
+		logging.L(ctx).Debug("Stopping worker pool")
 		m.pool.Stop()
-		log.Printf("worker pool stopped successfully")
+		logging.L(ctx).Debug("Worker pool stopped successfully")
 		close(done)
 	}()
 
 	select {
-	case <-done: // успешно остановился
-		log.Printf("worker pool cleanup completed")
-	case <-ctx.Done(): // контекст завершен
-		fmt.Println("warning: worker pool stop timeout")
+	case <-done:
+		logging.L(ctx).Debug("worker pool cleanup completed")
+	case <-ctx.Done():
+		logging.L(ctx).Warn("warning: worker pool stop timeout")
 	}
 }
 
