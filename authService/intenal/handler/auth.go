@@ -1,43 +1,30 @@
 package handler
 
 import (
-	myerrors "authService/intenal/errors"
+	customerrors "authService/intenal/errors"
 	"authService/pkg/dto"
-	"authService/pkg/hash"
-	"authService/pkg/jwt"
 	"errors"
-	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/theartofdevel/logging"
 )
 
 func (h *Handler) SignUp(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() SignUp. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	var request dto.RequestNewUser
+
 	ctx := c.Request.Context()
 
 	if err := c.BindJSON(&request); err != nil {
-		c.JSON(400, gin.H{"error": "bad request"})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	hashPassword, err := hash.HashPassword(request.Password)
-	if err != nil {
-		h.logger.Errorf("internal server error during hashing password: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-
-	request.Password = hashPassword
 	if err := h.servise.CreateNewUser(ctx, &request); err != nil {
-		if errors.Is(err, myerrors.ErrUserAlreadyExist) {
-			c.JSON(409, gin.H{"error": "user already exists"})
+		if errors.Is(err, customerrors.ErrUserAlreadyExist) {
+			c.JSON(409, gin.H{"error": customerrors.ErrUserAlreadyExist.Error()})
 		} else {
-			c.JSON(500, gin.H{"error": "internal server error"})
+			h.logger.Error("Internal server error during creating new user", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
@@ -49,34 +36,29 @@ func (h *Handler) SignUp(c *gin.Context) {
 }
 
 func (h *Handler) SignIn(c *gin.Context) {
-	start := time.Now()
-	defer func() {
-		h.logger.Tracef("func() SignIn. Execution time: %.2f", time.Since(start).Seconds())
-	}()
-
 	ctx := c.Request.Context()
 	var request dto.LoginUser
 
 	if err := c.BindJSON(&request); err != nil {
-		c.JSON(400, gin.H{"error": "bad request"})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	if err := h.servise.CheckLogin(ctx, &request); err != nil {
-		if errors.Is(err, myerrors.ErrUserNotFound) {
-			c.JSON(404, gin.H{"error": "user not found"})
-		} else if errors.Is(err, myerrors.ErrWrongPassword) {
-			c.JSON(400, gin.H{"error": "wrong password"})
+		if errors.Is(err, customerrors.ErrUserNotFound) {
+			c.JSON(404, gin.H{"error": customerrors.ErrUserNotFound.Error()})
+		} else if errors.Is(err, customerrors.ErrWrongPassword) {
+			c.JSON(400, gin.H{"error": customerrors.ErrWrongPassword.Error()})
 		} else {
-			h.logger.Errorf("internal server error during authorizaton: %v", err)
-			c.JSON(500, gin.H{"error": "internal server error"})
+			h.logger.Error("Internal server error during checking login", logging.ErrAttr(err))
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}
 
 	accessToken, refreshToken, err := h.servise.GenerateToken(ctx, &request)
 	if err != nil {
-		h.logger.Errorf("internal server error during generating token: %v", err)
-		c.JSON(500, gin.H{"error": "internal server error"})
+		h.logger.Error("Internal server error during generating token", logging.ErrAttr(err))
+		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		return
 	}
 	c.JSON(200, dto.SuccessLoginedDto{
@@ -89,19 +71,19 @@ func (h *Handler) SignIn(c *gin.Context) {
 
 func (h *Handler) RefreshTokenHandler(c *gin.Context) {
 	var req dto.RefreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(404, gin.H{"error": "refresh_token required"})
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(404, gin.H{"error": err.Error()})
 	}
 
-	accessToken, err := jwt.RefreshAccessToken(req.RefreshToken)
+	accessToken, err := h.servise.RefreshAccessToken(req.RefreshToken)
 	if err != nil {
-		switch err {
-		case myerrors.ErrTokenExpired:
+		if errors.Is(err, customerrors.ErrTokenExpired) {
 			c.JSON(401, gin.H{"error": "refresh token expired"})
-		case myerrors.ErrInvalidToken, myerrors.ErrUnexpectedSignMethod:
+		} else if errors.Is(err, customerrors.ErrInvalidToken) ||
+			errors.Is(err, customerrors.ErrUnexpectedSignMethod) {
 			c.JSON(401, gin.H{"error": "invalid refresh token"})
-		default:
-			c.JSON(500, gin.H{"error": "internal server error"})
+		} else {
+			c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
 		}
 		return
 	}

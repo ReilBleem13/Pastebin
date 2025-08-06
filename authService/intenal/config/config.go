@@ -1,17 +1,22 @@
 package config
 
 import (
-	"authService/pkg/logging"
 	"sync"
+	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
 )
 
-type Config struct {
-	Listen struct {
-		Port string `yaml:"port"`
-	} `yaml:"listen"`
+const configFileName string = "config.yml"
 
+type Config struct {
+	App struct {
+		Mode          string        `yaml:"mode"`
+		Port          string        `yaml:"port"`
+		JWTSecret     string        `yaml:"jwt_secret"`
+		JWTAccessTTL  time.Duration `yaml:"jwt_access_ttl"`
+		JWTRefreshTTL time.Duration `yaml:"jwt_refresh_ttl"`
+	} `yaml:"app"`
 	Storage StorageConfig `yaml:"storage"`
 }
 
@@ -27,14 +32,11 @@ type StorageConfig struct {
 var instance *Config
 var once sync.Once
 
-func GetConfig(filename string, logger *logging.Logger) *Config {
+func GetConfig() *Config {
 	once.Do(func() {
-		logger.Info("read application configuration")
 		instance = &Config{}
-		if err := cleanenv.ReadConfig("config.yml", instance); err != nil {
-			help, _ := cleanenv.GetDescription(instance, nil)
-			logger.Info(help)
-			logger.Fatal(err)
+		if err := cleanenv.ReadConfig(configFileName, instance); err != nil {
+			panic("config loading failed: " + err.Error())
 		}
 	})
 	return instance

@@ -1,6 +1,7 @@
-package jwt
+package utils
 
 import (
+	"authService/intenal/config"
 	myerrors "authService/intenal/errors"
 	"errors"
 	"fmt"
@@ -14,13 +15,10 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-const (
-	jwtKey string = "13287kjKNAskndq!*&8721632xkads239421931hfdsakfn"
-)
-
 var (
-	accessTTL  = 15 * time.Minute
-	refreshTTL = 7 * 24 * time.Hour
+	jwtKey     = []byte(config.GetConfig().App.JWTSecret)
+	accessTTL  = config.GetConfig().App.JWTAccessTTL
+	refreshTTL = config.GetConfig().App.JWTRefreshTTL
 )
 
 func GenerateTokens(userID int) (string, string, error) {

@@ -41,7 +41,7 @@ func main() {
 
 	ctxWithLogger := logging.ContextWithLogger(ctx, logger)
 
-	logging.WithAttrs(ctx,
+	logging.WithAttrs(ctxWithLogger,
 		logging.StringAttr("username", cfg.Storage.Username),
 		logging.StringAttr("password", cfg.Storage.Password),
 		logging.StringAttr("host", cfg.Storage.Host),
@@ -57,11 +57,6 @@ func main() {
 	}
 	defer postgres.Close()
 
-	minio, err := minio.NewMinioClient(ctx, cfg.Minio, 10)
-	if err != nil {
-		logger.Error("Failed to initialize minio", logging.ErrAttr(err))
-		return
-	}
 	logging.WithAttrs(ctx,
 		logging.StringAttr("addr", cfg.Minio.Addr),
 		logging.StringAttr("username", cfg.Minio.User),
@@ -69,7 +64,12 @@ func main() {
 		logging.StringAttr("bucket", cfg.Minio.Bucket),
 		logging.IntAttr("maxRetries", cfg.Minio.MaxRetries),
 		logging.BoolAttr("ssl-mode", cfg.Minio.Ssl),
-	).Info("Minio initizialized")
+	).Info("Minio initizializing")
+	minio, err := minio.NewMinioClient(ctx, cfg.Minio, 10)
+	if err != nil {
+		logger.Error("Failed to initialize minio", logging.ErrAttr(err))
+		return
+	}
 	defer minio.Close(ctxWithLogger)
 
 	redis := redis.NewRedisClient(ctxWithLogger, cfg.Redis)
@@ -126,7 +126,7 @@ func main() {
 
 	srv := new(handler.Server)
 	go func() {
-		if err := srv.Run(cfg.App.Port, handlers.InitRoutes()); err != nil {
+		if err := srv.Run(cfg.App.Port, handlers.InitRoutes(cfg.App.Mode)); err != nil {
 			logger.Error("Failed run server", logging.ErrAttr(err))
 			return
 		}

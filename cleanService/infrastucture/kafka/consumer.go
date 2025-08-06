@@ -2,10 +2,11 @@ package kafka
 
 import (
 	"cleanService/config"
-	logging "cleanService/utils/logger"
+	"context"
 	"fmt"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/theartofdevel/logging"
 )
 
 type Handler interface {
@@ -20,12 +21,15 @@ type Consumer struct {
 	workers  int
 }
 
-func NewConsumer(handler Handler, logger *logging.Logger, cfg config.KafkaConfig, workers int) (*Consumer, error) {
+func NewConsumer(ctx context.Context, handler Handler, cfg config.KafkaConfig, workers int) (*Consumer, error) {
 	config := &kafka.ConfigMap{
-		"bootstrap.servers":  cfg.Address,
-		"group.id":           cfg.Group,
-		"auto.offset.reset":  "latest",
-		"enable.auto.commit": true,
+		"bootstrap.servers":        cfg.Address,
+		"group.id":                 cfg.Group,
+		"auto.offset.reset":        cfg.AutoOffsetReset,
+		"enable.auto.commit":       cfg.EnableAutoCommit,
+		"isolation.level":          cfg.IsolationLevel,
+		"enable.partition.eof":     cfg.EnablePartitionEof,
+		"go.events.channel.enable": cfg.GoEventsChannelEnable,
 	}
 	c, err := kafka.NewConsumer(config)
 	if err != nil {
@@ -38,7 +42,7 @@ func NewConsumer(handler Handler, logger *logging.Logger, cfg config.KafkaConfig
 	}
 	return &Consumer{
 		consumer: c,
-		logger:   logger,
+		logger:   logging.L(ctx),
 		stop:     make(chan struct{}),
 		handler:  handler,
 		workers:  workers,
@@ -52,9 +56,16 @@ func (c *Consumer) Start() {
 		go func() {
 			for msg := range msgCh {
 				if err := c.handler.DeleteExpiredPastas(msg.Value); err != nil {
-					c.logger.Errorf("handler error: %v", err)
+					c.logger.Error("handler error", logging.ErrAttr(err))
+					continue
+				}
+
+				_, err := c.consumer.CommitMessage(msg)
+				if err != nil {
+					c.logger.Error("commit error", logging.ErrAttr(err))
 				}
 			}
+
 		}()
 	}
 
@@ -66,7 +77,7 @@ func (c *Consumer) Start() {
 		default:
 			msg, err := c.consumer.ReadMessage(-1)
 			if err != nil {
-				c.logger.Errorf("kafka read error: %v", err)
+				c.logger.Error("kafka read error", logging.ErrAttr(err))
 				continue
 			}
 			msgCh <- msg

@@ -13,4 +13,6 @@ var (
 	ErrUnexpectedSignMethod = errors.New("unexpected signing method")
 	ErrTokenExpired         = errors.New("token expired")
 	ErrInvalidToken         = errors.New("token is invalid")
+
+	ErrInternal = errors.New("internal server error")
 )

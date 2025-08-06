@@ -10,11 +10,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"pastebin/internal/config"
+	customerrors "pastebin/internal/errors"
 	"pastebin/internal/handler"
-	elasticClient "pastebin/internal/infrastructure/elastic"
+	"pastebin/internal/infrastructure/elastic"
 	minioClient "pastebin/internal/infrastructure/minio"
 	postgresClient "pastebin/internal/infrastructure/postgres"
-	redisClient "pastebin/internal/infrastructure/redis"
 	"pastebin/internal/models"
 	"pastebin/internal/repository"
 	"pastebin/internal/service"
@@ -26,18 +26,20 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/minio/minio-go/v7"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/theartofdevel/logging"
 )
+
+const pastaURL string = "http://localhost:10002/receive/"
 
 var (
 	testEnv *TestEnv
@@ -157,10 +159,15 @@ func SetupTestContainers() (*TestEnv, error) {
 
 	elasticC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "docker.elastic.co/elasticsearch/elasticsearch:8.9.0",
-			Env:          map[string]string{"discovery.type": "single-node", "xpack.security.enabled": "false"},
+			Image: "docker.elastic.co/elasticsearch/elasticsearch:8.9.0",
+			Env: map[string]string{
+				"discovery.type":                       "single-node",
+				"xpack.security.enabled":               "false",
+				"xpack.security.transport.ssl.enabled": "false",
+				"ES_JAVA_OPTS":                         "-Xms512m -Xmx512m",
+			},
 			ExposedPorts: []string{"9200/tcp"},
-			WaitingFor:   wait.ForListeningPort("9200/tcp").WithStartupTimeout(60 * time.Second),
+			WaitingFor:   wait.ForHTTP("/").WithPort("9200/tcp").WithStartupTimeout(120 * time.Second),
 		},
 		Started: true,
 	})
@@ -168,10 +175,16 @@ func SetupTestContainers() (*TestEnv, error) {
 		return nil, err
 	}
 
-	elasticPort, _ := elasticC.MappedPort(ctx, "9200")
-	elasticHost, _ := elasticC.Host(ctx)
+	elasticPort, err := elasticC.MappedPort(ctx, "9200")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get elasticsearch port: %w", err)
+	}
+	elasticHost, err := elasticC.Host(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed tp get elasticsearch host: %w", err)
+	}
 	elasticURL := []string{fmt.Sprintf("http://%s:%s", elasticHost, elasticPort.Port())}
-	elasticIndex := "testindex"
+	elasticIndex := fmt.Sprintf("testindex-%s", uuid.New().String())
 
 	terminate := func() {
 		_ = dbC.Terminate(ctx)
@@ -202,57 +215,88 @@ func setupTestApp(env *TestEnv) (*TestApp, error) {
 		return nil, err
 	}
 
-	redis, err := redisClient.NewRedisClient(ctx, config.RedisConfig{Host: env.RedisAddr})
-	if err != nil {
-		return nil, err
-	}
+	redis := redis.NewClient(&redis.Options{
+		Addr: env.RedisAddr,
+	})
 
 	minio, err := minioClient.NewMinioClient(ctx, config.MinioConfig{
-		Host:     env.MinioEndpoint,
-		Bucket:   env.MinioBucket,
-		Rootuser: env.MinioRootUser,
-		Password: env.MinioPassword,
-		Ssl:      false,
+		Addr:            env.MinioEndpoint,
+		Bucket:          env.MinioBucket,
+		User:            env.MinioRootUser,
+		Password:        env.MinioPassword,
+		MaxIdleConns:    100,
+		IdleConnTimeout: 30 * time.Second,
+		MaxRetries:      1,
+		Ssl:             false,
 	}, 10)
 	if err != nil {
 		return nil, err
 	}
 
-	elastiCli, err := elasticClient.NewElasticClient(config.ElasticConfig{
-		Addresses: env.ElasticURL,
-		Index:     env.ElasticIndex,
+	elastiClient, err := elastic.NewElasticClient(ctx, config.ElasticConfig{
+		Mode:               "debug",
+		Addr:               env.ElasticURL[0],
+		Username:           "",
+		Password:           "",
+		MaxRetries:         1,
+		CompressRequstBody: true,
+		Index:              env.ElasticIndex,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	err = runMigrations(env.MigrateURI, "../../../migrations")
+	index, err := elastiClient.CreateSearchIndex(env.ElasticIndex)
 	if err != nil {
 		return nil, err
 	}
 
-	repos := repository.NewRepository(postgres.Client(), redis.Client(), minio.Client(),
-		elastiCli.Client(), minio.Pool(), env.MinioBucket, "") // ПУСТОЙ ИНДЕКС ПУСТОЙ ИНДЕКС ПУСТОЙ ИНДЕКС
-	logger := logging.L(ctx) // <-временно
-	services := service.NewService(repos, logger)
-	h := handler.NewHandler(services, logger)
+	err = runMigrations(env.MigrateURI, "../../../../migrations")
+	if err != nil {
+		return nil, err
+	}
 
-	r := gin.Default()
-	auth := r.Group("/")
-	auth.Use(h.AuthMiddleWare())
+	repos := repository.NewRepository(postgres.Client(), redis, minio.Client(),
+		elastiClient.Client(), minio.Pool(), env.MinioBucket, index)
+	services := service.NewService(ctx, repos)
+	h := handler.NewHandler(ctx, services)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	api := r.Group("/")
+	api.Use(h.AuthMiddleWare())
 	{
-		auth.POST("/create", h.AccessPostAuth(), h.CreatePastaHandler)
-		auth.GET("/receive/:objectID", h.AccessByKeyAuth(), h.GetPastaHandler)
-		auth.DELETE("/delete/:objectID", h.AccessByKeyAuth(), h.DeletePastaHandler)
+		api.POST("/create", h.AccessCreate(), h.CreatePastaHandler)
+		api.GET("/receive/:hash", h.AccessHash(), h.GetPastaHandler)
+		api.DELETE("/delete/:hash", h.AccessHash(), h.DeletePastaHandler)
+
+		api.GET("/paginate", h.PaginatePublicHandler)
+		api.GET("/search", h.SearchHandler)
+
+		private := api.Group("/")
+		private.Use(h.RequireAuth())
+		{
+			private.PUT("/update/:hash", h.UpdateHandler)
+			private.GET("/paginate/me", h.PaginateForUserHandler)
+
+			favorites := private.Group("/favorite")
+			{
+				favorites.GET("/:favorite_id", h.GetFavorite)
+				favorites.DELETE("/:favorite_id", h.DeleteFavorite)
+				favorites.POST("/create/:hash", h.CreateFavorite)
+				favorites.GET("/paginate", h.PaginateFavorites)
+			}
+		}
 	}
 	return &TestApp{
 		Engine:   r,
 		Postgres: postgres.Client(),
-		Redis:    redis.Client(),
+		Redis:    redis,
 		Minio:    minio.Client(),
-		Elastic:  elastiCli.Client(),
-		Bucket:   "testchukki",
-		Index:    "testindex",
+		Elastic:  elastiClient.Client(),
+		Bucket:   env.MinioBucket,
+		Index:    index,
 		Services: services,
 	}, nil
 }
@@ -260,7 +304,7 @@ func setupTestApp(env *TestEnv) (*TestApp, error) {
 func cleanupAll(t *testing.T, postgres *sqlx.DB, redis *redis.Client, s3 *minio.Client, elastic *elasticsearch.Client, bucket, elasticIndex string) {
 	ctx := context.Background()
 
-	_, err := postgres.Exec("TRUNCATE TABLE pastas, users RESTART IDENTITY CASCADE;")
+	_, err := postgres.Exec("TRUNCATE TABLE pastas, users, favorites RESTART IDENTITY CASCADE;")
 	require.NoError(t, err)
 
 	require.NoError(t, redis.FlushAll(ctx).Err())
@@ -286,13 +330,26 @@ func isInDatabase(objectID string, client *sqlx.DB) (error, bool) {
 	return err, exists
 }
 
+func isDatabaseEmpty(client *sqlx.DB) (error, bool) {
+	var exists bool
+	err := client.Get(&exists, "SELECT EXISTS(SELECT 1 FROM pastas WHERE id > 0)")
+	return err, exists
+}
+
 func isInS3(ctx context.Context, objectID, bucket string, client *minio.Client) error {
 	_, err := client.StatObject(ctx, bucket, objectID, minio.GetObjectOptions{})
 	return err
 }
 
 func isTextInCache(ctx context.Context, hash string, client *redis.Client) error {
-	return client.Get(ctx, fmt.Sprintf("text:%s", hash)).Err()
+	err := client.Get(ctx, fmt.Sprintf("text:%s", hash)).Err()
+	if err == redis.Nil {
+		log.Println("key is empty!")
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 func isViewsInCache(ctx context.Context, hash string, client *redis.Client) error {
@@ -300,6 +357,9 @@ func isViewsInCache(ctx context.Context, hash string, client *redis.Client) erro
 }
 
 func TestMain(m *testing.M) {
+	_ = os.WriteFile("config.yml", []byte("jwt:\n key: test-key\n"), 0644)
+	defer os.Remove("config.yml")
+
 	var err error
 	testEnv, err = SetupTestContainers()
 	if err != nil {
@@ -336,11 +396,11 @@ func TestCreatePastaHandler(t *testing.T) {
 			checkResponse: func(t *testing.T, resp *dto.SuccessCreatePastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "File uploaded successfully", resp.Message)
 				require.Equal(t, "plaintext", resp.Metadata.Language)
-				require.Equal(t, "public", resp.Metadata.Visibility)
+				require.Equal(t, models.VisibilityPublic, resp.Metadata.Visibility)
 				require.NotEmpty(t, resp.Link)
 				require.NotEmpty(t, resp.Metadata)
 
-				hash := strings.TrimPrefix(resp.Link, "http://localhost:8080/receive/")
+				hash := strings.TrimPrefix(resp.Link, pastaURL)
 				err, exists := isInDatabase(resp.Metadata.Key, app.Postgres)
 				require.NoError(t, err)
 				require.True(t, exists)
@@ -363,12 +423,12 @@ func TestCreatePastaHandler(t *testing.T) {
 			checkResponse: func(t *testing.T, resp *dto.SuccessCreatePastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "File uploaded successfully", resp.Message)
 				require.Equal(t, "go", resp.Metadata.Language)
-				require.Equal(t, "public", resp.Metadata.Visibility)
+				require.Equal(t, models.VisibilityPublic, resp.Metadata.Visibility)
 				require.Equal(t, resp.Metadata.CreatedAt.Add(7*24*time.Hour), resp.Metadata.ExpiresAt)
 				require.NotEmpty(t, resp.Link)
 				require.NotEmpty(t, resp.Metadata)
 
-				hash := strings.TrimPrefix(resp.Link, "http://localhost:8080/receive/")
+				hash := strings.TrimPrefix(resp.Link, pastaURL)
 				err, exists := isInDatabase(resp.Metadata.Key, app.Postgres)
 				require.NoError(t, err)
 				require.True(t, exists)
@@ -392,14 +452,12 @@ func TestCreatePastaHandler(t *testing.T) {
 			checkResponse: func(t *testing.T, resp *dto.SuccessCreatePastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "File uploaded successfully", resp.Message)
 				require.Equal(t, "go", resp.Metadata.Language)
-				require.Equal(t, "private", resp.Metadata.Visibility)
+				require.Equal(t, models.VisibilityPrivate, resp.Metadata.Visibility)
 				require.Equal(t, resp.Metadata.CreatedAt.Add(7*24*time.Hour), resp.Metadata.ExpiresAt)
 				require.NotEmpty(t, resp.Link)
 				require.NotEmpty(t, resp.Metadata)
 
-				log.Printf("objectID: %s", resp.Metadata.Key)
-
-				hash := strings.TrimPrefix(resp.Link, "http://localhost:8080/receive/")
+				hash := strings.TrimPrefix(resp.Link, pastaURL)
 				err, exists := isInDatabase(resp.Metadata.Key, app.Postgres)
 				require.NoError(t, err)
 				require.True(t, exists)
@@ -448,12 +506,12 @@ func TestCreatePastaHandler(t *testing.T) {
 			name: "Unathorized",
 			inputBody: dto.RequestCreatePasta{
 				Message:    "Test Message #1",
-				Visibility: "Private",
+				Visibility: "private",
 			},
 			expectedStatus: 401,
 			withAuth:       false,
 			checkResponse: func(t *testing.T, resp *dto.SuccessCreatePastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
-				require.Contains(t, w.Body.String(), "unathorized: create private pastas require login")
+				require.Contains(t, w.Body.String(), "user is not authenticated")
 			},
 		},
 		{
@@ -510,7 +568,7 @@ func TestGetPastaHandler(t *testing.T) {
 		userID         int
 		userForJWT     int
 		query          string
-		checkResponse  func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder)
+		checkResponse  func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp)
 	}{
 		{
 			name:      "Successfully Got",
@@ -524,7 +582,7 @@ func TestGetPastaHandler(t *testing.T) {
 				return urlRrefix + "/" + hash
 			},
 			expectedStatus: 200,
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "Successfully got pasta", resp.Message)
 				require.Equal(t, "Test Message #1", resp.Text)
 			},
@@ -545,7 +603,7 @@ func TestGetPastaHandler(t *testing.T) {
 				return urlRrefix + "/" + hash
 			},
 			expectedStatus: 200,
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "Successfully got pasta", resp.Message)
 				require.Equal(t, "Test Message #1", resp.Text)
 			},
@@ -563,14 +621,14 @@ func TestGetPastaHandler(t *testing.T) {
 			},
 			expectedStatus: 200,
 			query:          "metadata=true",
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "Successfully got pasta", resp.Message)
 				require.Equal(t, "Test Message #1", resp.Text)
 
 				require.Equal(t, 0, resp.Metadata.UserID)
 				require.Equal(t, "go", resp.Metadata.Language)
-				require.Equal(t, "public", resp.Metadata.Visibility)
-				require.Equal(t, 2, resp.Metadata.Views)
+				require.Equal(t, models.VisibilityPublic, resp.Metadata.Visibility)
+				require.Equal(t, 1, resp.Metadata.Views)
 				require.Equal(t, resp.Metadata.CreatedAt.Add(24*time.Hour), resp.Metadata.ExpiresAt)
 			},
 		},
@@ -591,14 +649,14 @@ func TestGetPastaHandler(t *testing.T) {
 			},
 			expectedStatus: 200,
 			query:          "metadata=true",
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "Successfully got pasta", resp.Message)
 				require.Equal(t, "Test Message #1", resp.Text)
 
 				require.Equal(t, 0, resp.Metadata.UserID)
 				require.Equal(t, "go", resp.Metadata.Language)
-				require.Equal(t, "public", resp.Metadata.Visibility)
-				require.Equal(t, 2, resp.Metadata.Views)
+				require.Equal(t, models.VisibilityPublic, resp.Metadata.Visibility)
+				require.Equal(t, 1, resp.Metadata.Views)
 				require.Equal(t, resp.Metadata.CreatedAt.Add(24*time.Hour), resp.Metadata.ExpiresAt)
 			},
 		},
@@ -620,13 +678,13 @@ func TestGetPastaHandler(t *testing.T) {
 			expectedStatus: 200,
 			userID:         1,
 			query:          "metadata=true",
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "Successfully got pasta", resp.Message)
 				require.Equal(t, "Test Message #1", resp.Text)
 				require.Equal(t, 1, resp.Metadata.UserID)
 				require.Equal(t, "go", resp.Metadata.Language)
-				require.Equal(t, "public", resp.Metadata.Visibility)
-				require.Equal(t, 2, resp.Metadata.Views)
+				require.Equal(t, models.VisibilityPublic, resp.Metadata.Visibility)
+				require.Equal(t, 1, resp.Metadata.Views)
 				require.Equal(t, resp.Metadata.CreatedAt.Add(24*time.Hour), resp.Metadata.ExpiresAt)
 			},
 		},
@@ -651,13 +709,13 @@ func TestGetPastaHandler(t *testing.T) {
 			userID:         1,
 			userForJWT:     1,
 			query:          "metadata=true",
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Equal(t, "Successfully got pasta", resp.Message)
 				require.Equal(t, "Test Message #1", resp.Text)
 				require.Equal(t, 1, resp.Metadata.UserID)
 				require.Equal(t, "go", resp.Metadata.Language)
-				require.Equal(t, "private", resp.Metadata.Visibility)
-				require.Equal(t, 2, resp.Metadata.Views)
+				require.Equal(t, models.VisibilityPrivate, resp.Metadata.Visibility)
+				require.Equal(t, 1, resp.Metadata.Views)
 				require.Equal(t, resp.Metadata.CreatedAt.Add(24*time.Hour), resp.Metadata.ExpiresAt)
 			},
 		},
@@ -667,7 +725,7 @@ func TestGetPastaHandler(t *testing.T) {
 				return urlRrefix + "/" + "notfoundpasta"
 			},
 			expectedStatus: 404,
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Contains(t, w.Body.String(), "pasta is not found")
 			},
 		},
@@ -685,7 +743,7 @@ func TestGetPastaHandler(t *testing.T) {
 				return urlRrefix + "/" + hash
 			},
 			expectedStatus: 403,
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Contains(t, w.Body.String(), "password is wrong")
 			},
 		},
@@ -703,8 +761,8 @@ func TestGetPastaHandler(t *testing.T) {
 			withAuth:       true,
 			userID:         1,
 			userForJWT:     2,
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
-				require.Contains(t, w.Body.String(), "no access, private pasta")
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
+				require.Contains(t, w.Body.String(), "no access")
 			},
 		},
 		{
@@ -712,14 +770,14 @@ func TestGetPastaHandler(t *testing.T) {
 			withPasta: true,
 			testPasta: &dto.RequestCreatePasta{
 				Message:    "Test Message #1",
-				Visibility: "Private",
+				Visibility: "private",
 			},
 			url: func(urlRrefix string, hash string) string {
 				return urlRrefix + "/" + hash
 			},
 			expectedStatus: 401,
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
-				require.Contains(t, w.Body.String(), "unauthorized: private pasta")
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
+				require.Contains(t, w.Body.String(), "user is not authenticated")
 			},
 		},
 		{
@@ -734,8 +792,8 @@ func TestGetPastaHandler(t *testing.T) {
 			expectedStatus: 400,
 			userID:         1,
 			query:          "metadata=invalid",
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
-				require.Contains(t, w.Body.String(), "invalid 'metadata' query parameter")
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
+				require.Contains(t, w.Body.String(), "valid 'metadata' query parameter, must be 'true' of 'false'")
 			},
 		},
 		{
@@ -749,8 +807,25 @@ func TestGetPastaHandler(t *testing.T) {
 			},
 			expectedStatus: 400,
 			customBody:     []byte(`{invalid json}`),
-			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder) {
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
 				require.Contains(t, w.Body.String(), "invalid character")
+			},
+		},
+		{
+			name:      "Expire after Read",
+			withPasta: true,
+			testPasta: &dto.RequestCreatePasta{
+				Message:         "Message with expire after read",
+				ExpireAfterRead: true,
+			},
+			url: func(urlRrefix, hash string) string {
+				return urlRrefix + "/" + hash
+			},
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, resp *dto.GetPastaResponse, w *httptest.ResponseRecorder, app *TestApp) {
+				err, exists := isDatabaseEmpty(app.Postgres)
+				require.NoError(t, err)
+				require.False(t, exists)
 			},
 		},
 	}
@@ -805,7 +880,7 @@ func TestGetPastaHandler(t *testing.T) {
 			_ = json.Unmarshal(w.Body.Bytes(), &resp)
 
 			require.Equal(t, tt.expectedStatus, w.Code)
-			tt.checkResponse(t, &resp, w)
+			tt.checkResponse(t, &resp, w, testApp)
 		})
 	}
 }
@@ -838,7 +913,7 @@ func TestDeletePastaHandler(t *testing.T) {
 			},
 			expectedStatus: 200,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, objectID, hash *string) {
-				require.Contains(t, w.Body.String(), "deleted")
+				require.Contains(t, w.Body.String(), "Deleted")
 
 				err, exists := isInDatabase(*objectID, testApp.Postgres)
 				require.NoError(t, err)
@@ -863,7 +938,7 @@ func TestDeletePastaHandler(t *testing.T) {
 			userForJWT:     1,
 			expectedStatus: 200,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, objectID, hash *string) {
-				require.Contains(t, w.Body.String(), "deleted")
+				require.Contains(t, w.Body.String(), "Deleted")
 
 				err, exists := isInDatabase(*objectID, testApp.Postgres)
 				require.NoError(t, err)
@@ -880,7 +955,7 @@ func TestDeletePastaHandler(t *testing.T) {
 			},
 			expectedStatus: 404,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, objectID, hash *string) {
-				require.Contains(t, w.Body.String(), "pasta is not found")
+				require.Contains(t, w.Body.String(), customerrors.ErrPastaNotFound.Error())
 			},
 		},
 		{
@@ -896,7 +971,46 @@ func TestDeletePastaHandler(t *testing.T) {
 			expectedStatus: 401,
 			userID:         1,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, objectID, hash *string) {
-				require.Contains(t, w.Body.String(), "unauthorized: private pasta")
+				require.Contains(t, w.Body.String(), customerrors.ErrUserNotAuthenticated.Error())
+			},
+		},
+		{
+			name:      "No Access",
+			withPasta: true,
+			testPasta: &dto.RequestCreatePasta{
+				Message:    "Test Message #1",
+				Visibility: "private",
+			},
+			url: func(urlRrefix, hash string) string {
+				return urlRrefix + "/" + hash
+			},
+			expectedStatus: 403,
+			withAuth:       true,
+			userID:         1,
+			userForJWT:     2,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, objectID, hash *string) {
+				require.Contains(t, w.Body.String(), customerrors.ErrNoAccess.Error())
+			},
+		},
+		{
+			name: "Wrong Password",
+			inputBody: &dto.Password{
+				Password: "1222333",
+			},
+			withPasta: true,
+			testPasta: &dto.RequestCreatePasta{
+				Message:  "Test Message #1",
+				Password: "123",
+			},
+			url: func(urlRrefix, hash string) string {
+				return urlRrefix + "/" + hash
+			},
+			expectedStatus: 403,
+			withAuth:       true,
+			userID:         1,
+			userForJWT:     1,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, objectID, hash *string) {
+				require.Contains(t, w.Body.String(), customerrors.ErrWrongPassword.Error())
 			},
 		},
 	}
@@ -944,6 +1058,420 @@ func TestDeletePastaHandler(t *testing.T) {
 
 			require.Equal(t, tt.expectedStatus, w.Code)
 			tt.checkResponse(t, w, &pasta.ObjectID, &pasta.Hash)
+		})
+	}
+}
+
+func TestPaginatePublicPastaHandler(t *testing.T) {
+	tests := []struct {
+		name           string
+		withPasta      bool
+		testPastas     []dto.RequestCreatePasta
+		expectedStatus int
+		userID         int
+		query          string
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta)
+	}{
+		{
+			name:      "Success Paginated (without metadata)",
+			withPasta: true,
+			testPastas: []dto.RequestCreatePasta{
+				{Message: "First message"},
+				{Message: "Second message"},
+			},
+			expectedStatus: 200,
+			query:          "?limit=5&page=1",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta) {
+				require.Equal(t, 5, resp.Limit)
+				require.Equal(t, 1, resp.Page)
+				require.Equal(t, 2, resp.Total)
+				require.Len(t, resp.Pastas, len(testPastas))
+
+				expectedTexts := make(map[string]bool, len(testPastas))
+				for _, p := range testPastas {
+					expectedTexts[p.Message] = true
+				}
+				for _, actual := range resp.Pastas {
+					require.True(t, expectedTexts[actual.Text])
+				}
+			},
+		},
+		{
+			name:      "Success Paginated (with metadata)",
+			withPasta: true,
+			testPastas: []dto.RequestCreatePasta{
+				{Message: "First message"},
+				{Message: "Second message"},
+			},
+			expectedStatus: 200,
+			query:          "?limit=5&page=1&metadata=true",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta) {
+				require.Equal(t, 5, resp.Limit)
+				require.Equal(t, 1, resp.Page)
+				require.Equal(t, 2, resp.Total)
+				require.Len(t, resp.Pastas, len(testPastas))
+
+				expectedTexts := make(map[string]bool, len(testPastas))
+				for _, p := range testPastas {
+					expectedTexts[p.Message] = true
+				}
+
+				for _, actual := range resp.Pastas {
+					require.True(t, expectedTexts[actual.Text])
+					require.NotEmpty(t, actual.Metadata)
+				}
+			},
+		},
+		{
+			name:           "Pasta Not Found",
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta) {
+				require.Contains(t, w.Body.String(), customerrors.ErrPastaNotFound.Error())
+			},
+		},
+		{
+			name:           "Invalid Query Parametr",
+			query:          "?limit=ad",
+			expectedStatus: 400,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta) {
+				require.Contains(t, w.Body.String(), customerrors.ErrInvalidQueryParament.Error())
+			},
+		},
+		{
+			name:      "Exist Only Private Pastas",
+			withPasta: true,
+			testPastas: []dto.RequestCreatePasta{
+				{
+					Message:    "Private Pasta #1",
+					Visibility: "private",
+				},
+				{
+					Message:    "Private Pasta #2",
+					Visibility: "private",
+				},
+			},
+			userID:         1,
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta) {
+				require.Contains(t, w.Body.String(), customerrors.ErrPastaNotFound.Error())
+			},
+		},
+		{
+			name:      "Exists Only Public by User",
+			withPasta: true,
+			testPastas: []dto.RequestCreatePasta{
+				{
+					Message: "Private Pasta #1",
+				},
+				{
+					Message: "Private Pasta #2",
+				},
+			},
+			userID:         1,
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta) {
+				require.Equal(t, 5, resp.Limit)
+				require.Equal(t, 1, resp.Page)
+				require.Equal(t, 2, resp.Total)
+				require.Len(t, resp.Pastas, len(testPastas))
+
+				expectedTexts := make(map[string]bool, len(testPastas))
+				for _, p := range testPastas {
+					expectedTexts[p.Message] = true
+				}
+
+				for _, actual := range resp.Pastas {
+					require.True(t, expectedTexts[actual.Text])
+				}
+			},
+		},
+		{
+			name:      "Exists Only With Password",
+			withPasta: true,
+			testPastas: []dto.RequestCreatePasta{
+				{
+					Message:  "Private Pasta #1",
+					Password: "123",
+				},
+				{
+					Message:  "Private Pasta #2",
+					Password: "123",
+				},
+			},
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []dto.RequestCreatePasta) {
+				require.Contains(t, w.Body.String(), customerrors.ErrPastaNotFound.Error())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			ctx := t.Context()
+
+			if tt.withPasta {
+				for _, pasta := range tt.testPastas {
+					_, err := testApp.Services.Pasta.Create(ctx, &pasta, tt.userID)
+					require.NoError(t, err)
+				}
+			}
+
+			url := "/paginate"
+			if tt.query != "" {
+				url += tt.query
+			}
+
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			var resp dto.PaginatedPastaDTO
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+			require.Equal(t, tt.expectedStatus, w.Code)
+			tt.checkResponse(t, w, &resp, tt.testPastas)
+		})
+	}
+}
+
+type TestPastaWithUserID struct {
+	Pasta  dto.RequestCreatePasta
+	UserID int
+}
+
+func TestPaginateForUserPastaHandler(t *testing.T) {
+	tests := []struct {
+		name           string
+		withPasta      bool
+		testPastas     []TestPastaWithUserID
+		expectedStatus int
+		withAuth       bool
+		userForJWT     int
+		query          string
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []TestPastaWithUserID)
+	}{
+		{
+			name:      "Success Paginate",
+			withPasta: true,
+			testPastas: []TestPastaWithUserID{
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "First message",
+					},
+					UserID: 1,
+				},
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "Second message",
+					},
+					UserID: 1,
+				},
+			},
+			withAuth:       true,
+			userForJWT:     1,
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []TestPastaWithUserID) {
+				require.Len(t, resp.Pastas, 2)
+
+				expectedTexts := make(map[string]bool, len(testPastas))
+				for _, p := range testPastas {
+					expectedTexts[p.Pasta.Message] = true
+				}
+
+				for _, actual := range resp.Pastas {
+					require.True(t, expectedTexts[actual.Text])
+				}
+			},
+		},
+		{
+			name:      "Success Paginate (with Metadata)",
+			withPasta: true,
+			testPastas: []TestPastaWithUserID{
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "First message",
+					},
+					UserID: 1,
+				},
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "Second message",
+					},
+					UserID: 1,
+				},
+			},
+			withAuth:       true,
+			userForJWT:     1,
+			expectedStatus: 200,
+			query:          "?limit=10&page=1",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []TestPastaWithUserID) {
+				require.Equal(t, 10, resp.Limit)
+				require.Equal(t, 1, resp.Page)
+				require.Len(t, resp.Pastas, 2)
+
+				expectedTexts := make(map[string]bool, len(testPastas))
+				for _, p := range testPastas {
+					expectedTexts[p.Pasta.Message] = true
+				}
+
+				for _, actual := range resp.Pastas {
+					require.True(t, expectedTexts[actual.Text])
+					require.Nil(t, actual.Metadata)
+				}
+			},
+		},
+		{
+			name:      "Two Pastas Two User",
+			withPasta: true,
+			testPastas: []TestPastaWithUserID{
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "First message (first user)",
+					},
+					UserID: 1,
+				},
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "Second message (second user)",
+					},
+					UserID: 2,
+				},
+			},
+			withAuth:       true,
+			userForJWT:     1,
+			expectedStatus: 200,
+			query:          "?limit=10&page=1",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []TestPastaWithUserID) {
+				require.Equal(t, 10, resp.Limit)
+				require.Equal(t, 1, resp.Page)
+				require.Len(t, resp.Pastas, 1)
+
+				for _, actual := range resp.Pastas {
+					require.Contains(t, actual.Text, "First")
+					require.Nil(t, actual.Metadata)
+				}
+			},
+		},
+		{
+			name:           "Not Authorized",
+			expectedStatus: 401,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO, testPastas []TestPastaWithUserID) {
+				require.Contains(t, w.Body.String(), customerrors.ErrUserNotAuthenticated.Error())
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			ctx := t.Context()
+
+			if tt.withPasta {
+				for _, pasta := range tt.testPastas {
+					_, err := testApp.Services.Pasta.Create(ctx, &pasta.Pasta, pasta.UserID)
+					require.NoError(t, err)
+				}
+			}
+
+			url := "/paginate/me"
+			if tt.query != "" {
+				url += tt.query
+			}
+
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req.Header.Set("Content-Type", "application/json")
+
+			if tt.withAuth {
+				token, err := utils.GenerateTestJWT(tt.userForJWT)
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			log.Println(req.URL.String())
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			resp := &dto.PaginatedPastaDTO{}
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+			require.Equal(t, tt.expectedStatus, w.Code)
+			tt.checkResponse(t, w, resp, tt.testPastas)
+		})
+	}
+}
+
+var UrlForGet string = "localhost:10002/receive/"
+
+func TestSearchPastaHandle(t *testing.T) {
+	tests := []struct {
+		name           string
+		withPasta      bool
+		expectedStatus int
+		testsPasta     []dto.RequestCreatePasta
+		query          string
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SearchedPastas, hashs []string)
+	}{
+		{
+			name:           "Success",
+			withPasta:      true,
+			expectedStatus: 200,
+			testsPasta: []dto.RequestCreatePasta{
+				{Message: "Примерный жираф"},
+				{Message: "Примерный кот"},
+			},
+			query: "?search=жираф",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SearchedPastas, hashs []string) {
+				require.Len(t, hashs, 2)
+
+				expectedHashs := make(map[string]bool, len(hashs))
+				for _, hash := range hashs {
+					expectedHashs[hash] = true
+				}
+
+				log.Println("resp", resp)
+				for _, rawPasta := range resp.Pastas {
+					data := strings.TrimRight(rawPasta, UrlForGet)
+					require.True(t, expectedHashs[data])
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			ctx := t.Context()
+
+			hashs := []string{}
+			if tt.withPasta {
+				for _, pasta := range tt.testsPasta {
+					p, err := testApp.Services.Pasta.Create(ctx, &pasta, 0)
+					require.NoError(t, err)
+					hashs = append(hashs, p.Hash)
+				}
+			}
+			url := "/search" + tt.query
+
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			resp := &dto.SearchedPastas{}
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+			require.Equal(t, tt.expectedStatus, w.Code)
+			tt.checkResponse(t, w, resp, hashs)
 		})
 	}
 }

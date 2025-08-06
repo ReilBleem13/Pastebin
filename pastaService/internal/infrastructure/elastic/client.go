@@ -34,7 +34,6 @@ func (l *Logger) ResponseBodyEnabled() bool { return false } // тоже сам�
 type ElasticClient struct {
 	client *elasticsearch.Client
 	ctx    context.Context
-	index  string
 }
 
 func NewElasticClient(ctx context.Context, cfg config.ElasticConfig) (*ElasticClient, error) {
@@ -62,7 +61,6 @@ func NewElasticClient(ctx context.Context, cfg config.ElasticConfig) (*ElasticCl
 	}
 	return &ElasticClient{
 		client: client,
-		index:  cfg.Index,
 		ctx:    ctx,
 	}, nil
 }

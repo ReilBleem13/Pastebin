@@ -10,7 +10,7 @@ import (
 
 type Pasta interface {
 	Create(ctx context.Context, req *dto.RequestCreatePasta, userID int) (*models.Pasta, error)
-	Permission(ctx context.Context, hash, password, visibility string, userID int) error
+	Permission(ctx context.Context, hash, password, visibility string, userID int, forAccessCheck bool) error
 
 	Get(ctx context.Context, hash string, withMetadata, addView bool) (*models.PastaWithData, error)
 	GetText(ctx context.Context, keyText, objectID, hash string) (string, error)

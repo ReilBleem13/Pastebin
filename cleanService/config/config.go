@@ -1,16 +1,19 @@
 package config
 
 import (
-	logging "cleanService/utils/logger"
 	"sync"
+	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
 )
 
+const configFileName string = "config.yml"
+
 type Config struct {
-	Listen struct {
+	App struct {
+		Mode string `yaml:"mode"`
 		Port string `yaml:"port"`
-	} `yaml:"listen"`
+	} `yaml:"app"`
 
 	Storage StorageConfig `yaml:"storage"`
 	Minio   MinioConfig   `yaml:"minio"`
@@ -28,35 +31,47 @@ type StorageConfig struct {
 }
 
 type MinioConfig struct {
-	Host     string `yaml:"host"`
-	Bucket   string `yaml:"bucket"`
-	Rootuser string `yaml:"rootuser"`
-	Password string `yaml:"password"`
-	Ssl      bool   `yaml:"ssl"`
+	Addr            string        `yaml:"addr"`
+	Bucket          string        `yaml:"bucket"`
+	User            string        `yaml:"root_user"`
+	Password        string        `yaml:"root_password"`
+	MaxIdleConns    int           `yaml:"max_idle_conns"`
+	IdleConnTimeout time.Duration `yaml:"idle_conn_timeout"`
+	MaxRetries      int           `yaml:"max_retries"`
+	Ssl             bool          `yaml:"ssl"`
 }
 
 type ElasticConfig struct {
-	Addresses []string `yaml:"addresses"`
-	Index     string   `yaml:"index"`
+	Mode               string   `yaml:"mode"`
+	Addr               string   `yaml:"addr"`
+	Addrs              []string `yaml:"addrs"`
+	Username           string   `yaml:"username"`
+	Password           string   `yaml:"password"`
+	RetryOnStatus      []int    `yaml:"retry_on_status"`
+	MaxRetries         int      `yaml:"max_retries"`
+	CompressRequstBody bool     `yaml:"compress_request_body"`
+	Index              string   `yaml:"index"`
 }
 
 type KafkaConfig struct {
-	Address string `yaml:"address"`
-	Topic   string `yaml:"topic"`
-	Group   string `yaml:"group"`
+	Address               string `yaml:"address"`
+	Topic                 string `yaml:"topic"`
+	Group                 string `yaml:"group"`
+	AutoOffsetReset       string `yaml:"auto_offset_reset"`
+	EnableAutoCommit      bool   `yaml:"enable_auto_commit"`
+	IsolationLevel        string `yaml:"isolation_level"`
+	EnablePartitionEof    bool   `yaml:"enable_partition_eof"`
+	GoEventsChannelEnable bool   `yaml:"go.events.channel.enable"`
 }
 
 var instance *Config
 var once sync.Once
 
-func GetConfig(filename string, logger *logging.Logger) *Config {
+func GetConfig() *Config {
 	once.Do(func() {
-		logger.Info("read application configuration")
 		instance = &Config{}
-		if err := cleanenv.ReadConfig("config.yml", instance); err != nil {
-			help, _ := cleanenv.GetDescription(instance, nil)
-			logger.Info(help)
-			logger.Fatal(err)
+		if err := cleanenv.ReadConfig(configFileName, instance); err != nil {
+			panic("config loading failed: " + err.Error())
 		}
 	})
 	return instance

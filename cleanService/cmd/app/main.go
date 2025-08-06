@@ -7,44 +7,106 @@ import (
 	"cleanService/infrastucture/kafka"
 	s3 "cleanService/infrastucture/minio"
 	"cleanService/infrastucture/postgres"
-	logging "cleanService/utils/logger"
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 
 	_ "github.com/lib/pq"
-)
-
-const (
-	prodConfig string = "config.yml"
+	"github.com/theartofdevel/logging"
 )
 
 func main() {
-	logger := logging.GetLogger()
-	cfg := config.GetConfig(prodConfig, logger)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	minioClient, err := s3.NewMinioClient(context.TODO(), cfg.Minio, 10)
-	if err != nil {
-		logger.Fatalf("failed to initialize minio: %v", err)
+	cfg := config.GetConfig()
+
+	level := "info"
+	if cfg.App.Mode == "debug" {
+		level = "debug"
 	}
+	logger := logging.NewLogger(
+		logging.WithIsJSON(level != "debug"),
+		logging.WithAddSource(level != "debug"),
+		logging.WithLevel(level),
+	)
+	logger.With("mode", cfg.App.Mode).Info("App starting...")
 
-	elasticCLient, err := elastic.NewElasticClient(cfg.Elastic.Addresses)
+	ctxWithLogger := logging.ContextWithLogger(ctx, logger)
+
+	logging.WithAttrs(ctx,
+		logging.StringAttr("addr", cfg.Minio.Addr),
+		logging.StringAttr("username", cfg.Minio.User),
+		logging.StringAttr("password", "<REMOVED>"),
+		logging.StringAttr("bucket", cfg.Minio.Bucket),
+		logging.IntAttr("maxRetries", cfg.Minio.MaxRetries),
+		logging.BoolAttr("ssl-mode", cfg.Minio.Ssl),
+	).Info("Minio initizializing")
+	minioClient, err := s3.NewMinioClient(ctx, cfg.Minio, 10)
 	if err != nil {
-		logger.Fatalf("failed to initialize elasticsearch: %v", err)
+		logger.Error("Failed to initialize minio", logging.ErrAttr(err))
+		return
 	}
+	defer minioClient.Close(ctx)
 
+	logging.WithAttrs(ctx,
+		logging.StringAttr("addr", strings.Join(cfg.Elastic.Addrs, ", ")),
+		logging.StringAttr("index", cfg.Elastic.Index),
+	).Info("ElasticSearch initialized")
+	elasticCLient, err := elastic.NewElasticClient(ctxWithLogger, cfg.Elastic)
+	if err != nil {
+		logger.Error("Failed to initialize elasticsearch", logging.ErrAttr(err))
+		return
+	}
+	defer elasticCLient.Close()
+
+	logging.WithAttrs(ctxWithLogger,
+		logging.StringAttr("username", cfg.Storage.Username),
+		logging.StringAttr("password", cfg.Storage.Password),
+		logging.StringAttr("host", cfg.Storage.Host),
+		logging.StringAttr("port", cfg.Storage.Port),
+		logging.StringAttr("database", cfg.Storage.Dbname),
+	).Info("Postgres initializing")
 	dbURL := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
 		cfg.Storage.Host, cfg.Storage.Port, cfg.Storage.Username, cfg.Storage.Dbname, cfg.Storage.Password, cfg.Storage.Sslmode)
 	postgresClient, err := postgres.NewPostgresClient(context.TODO(), dbURL)
 	if err != nil {
-		logger.Fatalf("failed to initialize postgres: %v", err)
+		logger.Error("Failed to initialize postgres", logging.ErrAttr(err))
+		return
 	}
+	defer postgresClient.Close()
 
-	handler := handler.NewHandler(minioClient, elasticCLient, postgresClient, logger)
+	hdl := handler.NewHandler(ctxWithLogger, minioClient, elasticCLient, postgresClient)
 
-	c, err := kafka.NewConsumer(handler, logger, cfg.Kafka, 10)
+	server := new(handler.Server)
+	go func() {
+		if err := server.Run(cfg.App.Port, hdl.InitRoutes(cfg.App.Mode)); err != nil {
+			logger.Error("Failed run server", logging.ErrAttr(err))
+			return
+		}
+	}()
+
+	c, err := kafka.NewConsumer(ctxWithLogger, hdl, cfg.Kafka, 10)
 	if err != nil {
-		logger.Fatalf("failed to initialize new consumer: %v", err)
+		logger.Error("Failed to initialize consumer", logging.ErrAttr(err))
+		return
 	}
 	logger.Info("Consumer was created")
-	c.Start()
+
+	go c.Start()
+	defer c.Stop()
+
+	logger.Info("Server is running...")
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logger.Info("Server is shutting down...")
+
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Error("Failed to shutdown server", logging.ErrAttr(err))
+		return
+	}
 }

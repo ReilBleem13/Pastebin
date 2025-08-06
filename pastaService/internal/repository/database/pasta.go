@@ -178,7 +178,6 @@ func (m *pastaDatabase) DeleteExpiredPasta(ctx context.Context, keys []string) e
 	return nil
 }
 
-// new methods
 func (m *pastaDatabase) IsPastaExists(ctx context.Context, hash string) (bool, error) {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE hash = $1)", pastasTables)
 
@@ -199,7 +198,7 @@ func (m *pastaDatabase) IsPastaExistsByObjectID(ctx context.Context, objectID st
 	return exists, nil
 }
 
-func (m *pastaDatabase) IsAccessPrivate(ctx context.Context, userID int, hash string) (bool, error) {
+func (m *pastaDatabase) IsAccessPermission(ctx context.Context, userID int, hash string) (bool, error) {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE user_id = $1 AND hash = $2)", pastasTables)
 
 	var exists bool
@@ -377,11 +376,12 @@ func (m *pastaDatabase) GetFavoriteAndCheckUser(ctx context.Context, userID, fav
 }
 
 func (m *pastaDatabase) DeleteFavorite(ctx context.Context, userID, favoriteID int) error {
+
 	query := `
 		SELECT user_id FROM favorites WHERE id = $1
 	`
 	var userIDfromDB int
-	err := m.db.GetContext(ctx, &userIDfromDB, query, userID)
+	err := m.db.GetContext(ctx, &userIDfromDB, query, favoriteID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return customerrors.ErrPastaNotFound

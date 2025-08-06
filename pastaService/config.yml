@@ -1,5 +1,5 @@
 app:
-  mode: debug # debug or prod
+  mode: debug # debug or release
   port: 10002
   jwt_secret: 13287kjKNAskndq!*&8721632xkads239421931hfdsakfn3212
 

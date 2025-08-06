@@ -15,7 +15,7 @@ var (
 	ErrPasswordRequired    = errors.New("password is required")
 
 	ErrPastaNotFound   = errors.New("pasta is not found")
-	ErrNoAccess        = errors.New("no access, private pasta")
+	ErrNoAccess        = errors.New("no access")
 	ErrPasswordIsEmpty = errors.New("password is empty")
 	ErrWrongPassword   = errors.New("password is wrong")
 

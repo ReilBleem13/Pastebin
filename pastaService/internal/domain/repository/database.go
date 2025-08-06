@@ -36,7 +36,7 @@ type PastaDatabase interface {
 
 	IsPastaExists(ctx context.Context, hash string) (bool, error)
 	IsPastaExistsByObjectID(ctx context.Context, objectID string) (bool, error)
-	IsAccessPrivate(ctx context.Context, userID int, hash string) (bool, error)
+	IsAccessPermission(ctx context.Context, userID int, hash string) (bool, error)
 
 	PaginateOnlyPublic(ctx context.Context, limit, offset int) ([]string, error)
 	PaginateOnlyByUserID(ctx context.Context, limit, offset, userID int) ([]string, error)

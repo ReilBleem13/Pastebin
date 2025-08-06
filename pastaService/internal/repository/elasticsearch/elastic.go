@@ -45,7 +45,9 @@ func (e *Elastic) Indexing(text []byte, objectID string) error {
 	res, err := e.client.Index(
 		e.index,
 		&buf,
-		e.client.Index.WithDocumentID(objectID))
+		e.client.Index.WithDocumentID(objectID),
+		e.client.Index.WithRefresh("wait_for"),
+	)
 	if err != nil {
 		return fmt.Errorf("indexing request failed: %w", err)
 	}
@@ -179,5 +181,6 @@ func (e *Elastic) SearchWord(word string) ([]string, error) {
 			filenames = append(filenames, id)
 		}
 	}
+	log.Println(filenames)
 	return filenames, nil
 }

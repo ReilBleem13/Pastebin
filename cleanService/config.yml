@@ -1,27 +1,48 @@
-listen:
+app:
+  mode: debug # debug or release
   port: 10003
 
 storage:
   host: db
   port: 5432
   username: postgres
-  dbname: pastas
-  password: qwerty123
+  dbname: test
+  password: qwerty
   sslmode: disable
 
 minio:
-  host: minio:9000
-  bucket: chukki
-  rootuser: root
-  password: minio_password
+  addr: minio1:9000 # кворум на большее
+  bucket: pastas
+  root_user: colorvax
+  root_password: colorvax_super
+  max_idle_conns: 100
+  idle_conn_timeout: 30s
+  max_retries: 3
   ssl: false
 
 elastic:
-  addresses:
-    - http://elasticsearch:9200
+  mode: standalone # cluster or standalone
+  addr: http://elasticsearch:9200
+  addrs:
+    - http://elasticsearch1:9200
+    - http://elasticsearch2:9200
+    - http://elasticsearch3:9200
+  username: root
+  password: root_password
+  retry_on_status: 
+    - 502
+    - 503
+    - 504
+  max_retries: 3
+  compress_request_body: true
   index: pastas
 
 kafka:
-  address: kafka:9092
+  addr: kafka:9092
   topic: clean.expired
   group: cleaner
+  auto_offset_reset: earliest
+  enable_auto_commit: false
+  isolation_level: read_committed
+  enable_partition_eof: false
+  go.events.channel.enable: true

@@ -12,7 +12,6 @@ import (
 	"pastebin/internal/repository"
 	"pastebin/internal/utils"
 	"pastebin/pkg/dto"
-	hashing "pastebin/pkg/hash"
 	"pastebin/pkg/retry"
 	"pastebin/pkg/validate"
 	"strconv"
@@ -96,7 +95,7 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 		return nil, fmt.Errorf("failed to store pasta in S3: %w", err)
 	}
 
-	pastaMetadata.Hash = hashing.Hash(pastaMetadata.ObjectID)
+	pastaMetadata.Hash = utils.Hash(pastaMetadata.ObjectID)
 	pastaMetadata.ExpiresAt = expiresAt
 	pastaMetadata.ExpireAfterRead = req.ExpireAfterRead
 	pastaMetadata.PasswordHash = passwordHash
@@ -144,11 +143,16 @@ func (m *PastaService) Create(ctx context.Context, req *dto.RequestCreatePasta, 
 	return pastaMetadata, nil
 }
 
-func (m *PastaService) Permission(ctx context.Context, hash, password, visibility string, userID int) error {
+/*
+1. Проверка существует ли паста.
+2. Если паста приватная или флаг forAccessCheck = true, проверяется имеет ли пользователь право на эту пасту.
+3. Получение хеша пароля, если не пустой, то проверка.
+*/
+func (m *PastaService) Permission(ctx context.Context, hash, password, visibility string, userID int, forAccessCheck bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	m.logger.Debug("Cheking is pasta exits")
+	m.logger.Debug("Cheking is pasta exists")
 	var exists bool
 	err := retry.Retry(ctx, func() error {
 		var err error
@@ -162,13 +166,13 @@ func (m *PastaService) Permission(ctx context.Context, hash, password, visibilit
 		return customerrors.ErrPastaNotFound
 	}
 
-	if visibility == string(models.VisibilityPrivate) {
-		m.logger.Debug("Checking is access private")
+	if visibility == string(models.VisibilityPrivate) || forAccessCheck {
+		m.logger.Debug("Checking access permissions")
 
 		var hasAccess bool
 		err = retry.Retry(ctx, func() error {
 			var err error
-			hasAccess, err = m.db.IsAccessPrivate(ctx, userID, hash)
+			hasAccess, err = m.db.IsAccessPermission(ctx, userID, hash)
 			return err
 		}, retry.IsRetryableErrorDatabase, retry.NewConfigWithComponent("db"), m.logger)
 		if err != nil {
@@ -403,7 +407,7 @@ func (m *PastaService) Search(ctx context.Context, word string) ([]string, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to search word: %w", err)
 	}
-
+	m.logger.Debug("Searched objectIDs", logging.AnyAttr("ObjectIDs", objectIDs))
 	if len(objectIDs) == 0 {
 		return []string{}, customerrors.ErrEmptySearchResult
 	}
@@ -633,7 +637,7 @@ func (m *PastaService) Paginate(
 	)
 
 	if rawLimit != "" {
-		limit, err := strconv.Atoi(rawLimit)
+		limit, err = strconv.Atoi(rawLimit)
 		if err != nil {
 			return nil, customerrors.ErrInvalidQueryParament
 		}

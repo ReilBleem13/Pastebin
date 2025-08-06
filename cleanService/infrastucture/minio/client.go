@@ -6,10 +6,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/theartofdevel/logging"
 )
 
 const batchSize = 500
@@ -28,21 +30,19 @@ func NewMinioClient(ctx context.Context, cfg config.MinioConfig, workers int) (*
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	client, err := minio.New(
-		cfg.Host,
-		&minio.Options{
-			Creds: credentials.NewStaticV4(
-				cfg.Rootuser,
-				cfg.Password,
-				"",
-			),
-			Secure: cfg.Ssl,
+	client, err := minio.New(cfg.Addr, &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.User, cfg.Password, ""),
+		Secure: cfg.Ssl,
+		Transport: &http.Transport{
+			MaxIdleConns:    cfg.MaxIdleConns,
+			IdleConnTimeout: cfg.IdleConnTimeout,
 		},
-	)
+		MaxRetries: cfg.MaxRetries,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minio client: %w", err)
 	}
-
+	logging.StringAttr("bucket", cfg.Bucket)
 	exists, err := client.BucketExists(ctx, cfg.Bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check bucket existence: %w", err)
@@ -56,6 +56,7 @@ func NewMinioClient(ctx context.Context, cfg config.MinioConfig, workers int) (*
 	}
 	pool := workerpool.NewWorkerPool(workers)
 	pool.Start()
+
 	return &MinioClient{client: client, pool: pool, bucket: cfg.Bucket}, nil
 }
 

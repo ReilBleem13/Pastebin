@@ -89,13 +89,13 @@ func (h *Handler) GetPastaHandler(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	h.logger.Debug("Calling Permission Method")
-	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
+	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID, false)
 	if errors.Is(err, customerrors.ErrPastaNotFound) {
 		c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		return
 	} else if errors.Is(err, customerrors.ErrNoAccess) ||
 		errors.Is(err, customerrors.ErrWrongPassword) {
-		c.JSON(403, gin.H{"error": customerrors.ErrWrongPassword.Error()})
+		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	} else if err != nil {
 		h.logger.Error("Internal server error during checking permission", logging.ErrAttr(err))
@@ -145,7 +145,7 @@ func (h *Handler) DeletePastaHandler(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	h.logger.Debug("Calling Permission Method")
-	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID)
+	err = h.servises.Pasta.Permission(ctx, hash, passwordRequest.Password, visibility, userID, false)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrPastaNotFound) {
 			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
@@ -285,7 +285,7 @@ func (h *Handler) UpdateHandler(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	h.logger.Debug("Calling Permission Method")
-	err = h.servises.Pasta.Permission(ctx, hash, updateRequest.Password, visibility, userID)
+	err = h.servises.Pasta.Permission(ctx, hash, updateRequest.Password, visibility, userID, true)
 	if errors.Is(err, customerrors.ErrPastaNotFound) {
 		c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
 		return

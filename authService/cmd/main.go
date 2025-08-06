@@ -6,39 +6,60 @@ import (
 	"authService/intenal/infrastructure/postgres"
 	"authService/intenal/repository"
 	"authService/intenal/service"
-	"authService/pkg/logging"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
-)
 
-const (
-	prodConfig string = "config.yml"
+	"github.com/theartofdevel/logging"
 )
 
 func main() {
-	logger := logging.GetLogger()
-	cfg := config.GetConfig(prodConfig, logger)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	cfg := config.GetConfig()
+
+	level := "info"
+	if cfg.App.Mode == "debug" {
+		level = "debug"
+	}
+	logger := logging.NewLogger(
+		logging.WithIsJSON(level != "debug"),
+		logging.WithAddSource(level != "debug"),
+		logging.WithLevel(level),
+	)
+	logger.With("mode", cfg.App.Mode).Info("App starting...")
+
+	ctxWithLogger := logging.ContextWithLogger(ctx, logger)
+
+	logging.WithAttrs(ctxWithLogger,
+		logging.StringAttr("username", cfg.Storage.Username),
+		logging.StringAttr("password", cfg.Storage.Password),
+		logging.StringAttr("host", cfg.Storage.Host),
+		logging.StringAttr("port", cfg.Storage.Port),
+		logging.StringAttr("database", cfg.Storage.Dbname),
+	).Info("Postgres initializing")
 	dbURL := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
 		cfg.Storage.Host, cfg.Storage.Port, cfg.Storage.Username, cfg.Storage.Dbname, cfg.Storage.Password, cfg.Storage.Sslmode)
-	logger.Infof("Результат: %s", dbURL)
-	postgres, err := postgres.NewPostgresDB(context.TODO(), dbURL)
+
+	postgres, err := postgres.NewPostgresDB(ctx, dbURL)
 	if err != nil {
-		logger.Fatalf("failed to initialize postgres: %v", err)
+		logger.Error("Failed to initialize postgres", logging.ErrAttr(err))
+		return
 	}
+	defer postgres.Close()
 
 	repo := repository.NewAuthRepository(postgres.Client())
-	srv := service.NewScannerService(repo, logger)
-	handlers := handler.NewHandler(srv, logger)
+	srv := service.NewScannerService(ctxWithLogger, repo)
+	handlers := handler.NewHandler(ctxWithLogger, srv)
 
 	server := new(handler.Server)
 	go func() {
-		if err := server.Run(cfg.Listen.Port, handlers.InitRoutes()); err != nil {
-			log.Fatalf("status: %s", err.Error())
+		if err := server.Run(cfg.App.Port, handlers.InitRoutes(cfg.App.Mode)); err != nil {
+			logger.Error("Failed run server", logging.ErrAttr(err))
+			return
 		}
 	}()
 
@@ -48,9 +69,8 @@ func main() {
 	<-quit
 	logger.Info("Server is shutting down...")
 
-	postgres.Close()
-
-	if err := server.Shutdown(context.Background()); err != nil {
-		log.Fatalf("status: %v", err.Error())
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Error("Failed to shutdown server", logging.ErrAttr(err))
+		return
 	}
 }

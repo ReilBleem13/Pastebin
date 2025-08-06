@@ -20,8 +20,8 @@ func NewHandler(ctx context.Context, servises *service.Service) *Handler {
 	}
 }
 
-func (h *Handler) InitRoutes() *gin.Engine {
-	gin.SetMode(gin.ReleaseMode)
+func (h *Handler) InitRoutes(ginMode string) *gin.Engine {
+	gin.SetMode(ginMode)
 	router := gin.New()
 
 	router.Use(gin.Recovery(), h.Logger())

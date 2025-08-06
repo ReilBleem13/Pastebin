@@ -46,6 +46,7 @@ func StartScannerWorker(ctx context.Context, db *sqlx.DB, producer *kafka.Produc
 			}
 
 			if len(expiredIDs) == 0 {
+				logging.L(ctx).Info("Produces send ZERO pastas.")
 				continue
 			}
 

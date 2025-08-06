@@ -15,14 +15,21 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-var jwtKey = []byte(config.GetConfig().App.JWTSecret)
+var jwtKey []byte
+
+func getJWTKey() []byte {
+	if jwtKey == nil {
+		jwtKey = []byte(config.GetConfig().App.JWTSecret)
+	}
+	return jwtKey
+}
 
 func VerifyAccessToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, customerrors.ErrUnexpectedSignMethod
 		}
-		return jwtKey, nil
+		return getJWTKey(), nil
 	})
 
 	if err != nil {
@@ -52,7 +59,7 @@ func GenerateTestJWT(userID int) (string, error) {
 		},
 	}
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessTokenString, err := accessToken.SignedString([]byte(jwtKey))
+	accessTokenString, err := accessToken.SignedString([]byte(getJWTKey()))
 	if err != nil {
 		return "", err
 	}
