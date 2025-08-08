@@ -1,0 +1,27 @@
+time=2025-08-08T18:24:20.164+03:00 level=DEBUG msg="New HTTP elasticsearch request" Method=HEAD URL=http://localhost:32857/testindex-2025.08.08 Status="404 Not Found" Duration=9.763695ms
+time=2025-08-08T18:24:20.785+03:00 level=DEBUG msg="New HTTP elasticsearch request" Method=PUT URL=http://localhost:32857/testindex-2025.08.08 Status="200 OK" Duration=621.231644ms
+time=2025-08-08T18:24:20.785+03:00 level=DEBUG msg="Index [testindex-2025.08.08] created successfully"
+time=2025-08-08T18:24:20.830+03:00 level=DEBUG msg="Validating request create pasta"
+time=2025-08-08T18:24:20.830+03:00 level=DEBUG msg="Store to s3"
+time=2025-08-08T18:24:20.844+03:00 level=DEBUG msg="Store to database"
+time=2025-08-08T18:24:20.846+03:00 level=DEBUG msg=Indexing
+time=2025-08-08T18:24:21.691+03:00 level=DEBUG msg="New HTTP elasticsearch request" Method=PUT URL="http://localhost:32857/testindex-2025.08.08/_doc/public:user:1:221df73b-4bb6-4ee3-a8e5-4b307919744b.txt?refresh=wait_for" Status="201 Created" Duration=844.7056ms
+time=2025-08-08T18:24:21.691+03:00 level=DEBUG msg="Creating views"
+time=2025-08-08T18:24:21.691+03:00 level=DEBUG msg="Add text to cache"
+time=2025-08-08T18:24:21.692+03:00 level=DEBUG msg="Validating request create pasta"
+time=2025-08-08T18:24:21.693+03:00 level=DEBUG msg="Store to s3"
+time=2025-08-08T18:24:21.695+03:00 level=DEBUG msg="Store to database"
+time=2025-08-08T18:24:21.696+03:00 level=DEBUG msg=Indexing
+time=2025-08-08T18:24:22.724+03:00 level=DEBUG msg="New HTTP elasticsearch request" Method=PUT URL="http://localhost:32857/testindex-2025.08.08/_doc/public:user:1:9f10fc95-db76-43ee-b997-666c47c5e063.txt?refresh=wait_for" Status="201 Created" Duration=1.027258351s
+time=2025-08-08T18:24:22.724+03:00 level=DEBUG msg="Creating views"
+time=2025-08-08T18:24:22.724+03:00 level=DEBUG msg="Add text to cache"
+time=2025-08-08T18:24:22.728+03:00 level=DEBUG msg="Calling AuthMiddleware"
+time=2025-08-08T18:24:22.728+03:00 level=DEBUG msg="Calling RequireAuth"
+time=2025-08-08T18:24:22.728+03:00 level=DEBUG msg="Paginate objectIDs from database"
+time=2025-08-08T18:24:22.729+03:00 level=DEBUG msg="Getting text from s3"
+time=2025-08-08T18:24:22.731+03:00 level=DEBUG msg="Merge text with metadata"
+time=2025-08-08T18:24:22.731+03:00 level=DEBUG msg=paginatedPasta result="&{Status:200 Pastas:[{Text:First Message Metadata:<nil>}] Page:1 Limit:10 Total:1}"
+time=2025-08-08T18:24:22.776+03:00 level=DEBUG msg="New HTTP elasticsearch request" Method=DELETE URL=http://localhost:32857/testindex-2025.08.08 Status="200 OK" Duration=34.302944ms
+time=2025-08-08T18:24:22.780+03:00 level=DEBUG msg="New HTTP elasticsearch request" Method=HEAD URL=http://localhost:32857/testindex-2025.08.08 Status="404 Not Found" Duration=4.331495ms
+time=2025-08-08T18:24:22.875+03:00 level=DEBUG msg="New HTTP elasticsearch request" Method=PUT URL=http://localhost:32857/testindex-2025.08.08 Status="200 OK" Duration=92.998352ms
+time=2025-08-08T18:24:22.875+03:00 level=DEBUG msg="Index [testindex-2025.08.08] created successfully"

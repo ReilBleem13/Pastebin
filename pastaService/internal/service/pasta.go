@@ -559,9 +559,14 @@ loop:
 	return finalMetadata, nil
 }
 
-func (m *PastaService) Favorite(ctx context.Context, hash, visibility string, userID int) error {
+func (m *PastaService) Favorite(ctx context.Context, hash string, userID int) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
+	visibility, err := m.db.GetVisibility(ctx, hash)
+	if err != nil {
+		return fmt.Errorf("failed get visibility: %w", err)
+	}
 
 	if visibility == string(models.VisibilityPrivate) {
 		return customerrors.ErrNotAllowed
@@ -569,7 +574,7 @@ func (m *PastaService) Favorite(ctx context.Context, hash, visibility string, us
 
 	m.logger.Debug("Checking is pasta exists")
 	var exists bool
-	err := retry.Retry(ctx, func() error {
+	err = retry.Retry(ctx, func() error {
 		var err error
 		exists, err = m.db.IsPastaExists(ctx, hash)
 		return err

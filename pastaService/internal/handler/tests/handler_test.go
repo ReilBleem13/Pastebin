@@ -29,7 +29,6 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/minio/minio-go/v7"
@@ -37,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/theartofdevel/logging"
 )
 
 const pastaURL string = "http://localhost:10002/receive/"
@@ -60,14 +60,16 @@ type TestEnv struct {
 }
 
 type TestApp struct {
-	Engine   *gin.Engine
-	Postgres *sqlx.DB
-	Redis    *redis.Client
-	Minio    *minio.Client
-	Elastic  *elasticsearch.Client
-	Bucket   string
-	Index    string
-	Services *service.Service
+	Engine         *gin.Engine
+	Postgres       *sqlx.DB
+	Redis          *redis.Client
+	Minio          *minio.Client
+	Elastic        *elasticsearch.Client
+	ElasticService *elastic.ElasticClient
+	Bucket         string
+	Index          string
+	Services       *service.Service
+	repos          *repository.Repository
 }
 
 func runMigrations(dbURL string, migrationsPath string) error {
@@ -184,7 +186,7 @@ func SetupTestContainers() (*TestEnv, error) {
 		return nil, fmt.Errorf("failed tp get elasticsearch host: %w", err)
 	}
 	elasticURL := []string{fmt.Sprintf("http://%s:%s", elasticHost, elasticPort.Port())}
-	elasticIndex := fmt.Sprintf("testindex-%s", uuid.New().String())
+	elasticIndex := "testindex"
 
 	terminate := func() {
 		_ = dbC.Terminate(ctx)
@@ -209,6 +211,13 @@ func SetupTestContainers() (*TestEnv, error) {
 
 func setupTestApp(env *TestEnv) (*TestApp, error) {
 	ctx := context.Background()
+
+	logging.NewLogger(
+		logging.WithAddSource(false),
+		logging.WithIsJSON(false),
+		logging.WithLevel("debug"),
+		logging.WithLogFilePath("logs"),
+	)
 
 	postgres, err := postgresClient.NewPostgresDB(ctx, env.PostgresURI)
 	if err != nil {
@@ -290,18 +299,20 @@ func setupTestApp(env *TestEnv) (*TestApp, error) {
 		}
 	}
 	return &TestApp{
-		Engine:   r,
-		Postgres: postgres.Client(),
-		Redis:    redis,
-		Minio:    minio.Client(),
-		Elastic:  elastiClient.Client(),
-		Bucket:   env.MinioBucket,
-		Index:    index,
-		Services: services,
+		Engine:         r,
+		Postgres:       postgres.Client(),
+		Redis:          redis,
+		Minio:          minio.Client(),
+		Elastic:        elastiClient.Client(),
+		ElasticService: elastiClient,
+		Bucket:         env.MinioBucket,
+		Index:          index,
+		Services:       services,
+		repos:          repos,
 	}, nil
 }
 
-func cleanupAll(t *testing.T, postgres *sqlx.DB, redis *redis.Client, s3 *minio.Client, elastic *elasticsearch.Client, bucket, elasticIndex string) {
+func cleanupAll(t *testing.T, postgres *sqlx.DB, redis *redis.Client, s3 *minio.Client, elasticService *elastic.ElasticClient, elastic *elasticsearch.Client, bucket, elasticIndex string) {
 	ctx := context.Background()
 
 	_, err := postgres.Exec("TRUNCATE TABLE pastas, users, favorites RESTART IDENTITY CASCADE;")
@@ -322,6 +333,10 @@ func cleanupAll(t *testing.T, postgres *sqlx.DB, redis *redis.Client, s3 *minio.
 
 	_, err = elastic.Indices.Delete([]string{elasticIndex})
 	require.NoError(t, err)
+
+	newIndex, err := elasticService.CreateSearchIndex("testindex")
+	require.NoError(t, err)
+	testApp.Index = newIndex
 }
 
 func isInDatabase(objectID string, client *sqlx.DB) (error, bool) {
@@ -528,7 +543,7 @@ func TestCreatePastaHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(func() {
-				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
 			})
 
 			body, err := json.Marshal(tt.inputBody)
@@ -833,7 +848,7 @@ func TestGetPastaHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(func() {
-				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
 			})
 
 			ctx := t.Context()
@@ -1018,7 +1033,7 @@ func TestDeletePastaHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(func() {
-				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
 			})
 
 			ctx := t.Context()
@@ -1208,7 +1223,7 @@ func TestPaginatePublicPastaHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(func() {
-				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
 			})
 
 			ctx := t.Context()
@@ -1369,7 +1384,7 @@ func TestPaginateForUserPastaHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(func() {
-				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
 			})
 
 			ctx := t.Context()
@@ -1435,18 +1450,48 @@ func TestSearchPastaHandle(t *testing.T) {
 					expectedHashs[hash] = true
 				}
 
-				log.Println("resp", resp)
 				for _, rawPasta := range resp.Pastas {
-					data := strings.TrimRight(rawPasta, UrlForGet)
+					data := strings.TrimPrefix(rawPasta, UrlForGet)
 					require.True(t, expectedHashs[data])
 				}
+			},
+		},
+		{
+			name:           "Empty Search Result",
+			expectedStatus: 200,
+			query:          "?search=жираф",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SearchedPastas, hashs []string) {
+				require.Contains(t, w.Body.String(), customerrors.ErrEmptySearchResult.Error())
+			},
+		},
+		{
+			name:           "Empty Search Field",
+			expectedStatus: 400,
+			query:          "?search=",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SearchedPastas, hashs []string) {
+				require.Contains(t, w.Body.String(), customerrors.ErrEmptySearchField.Error())
+			},
+		},
+		{
+			name:      "Only 1/3 is public",
+			withPasta: true,
+			testsPasta: []dto.RequestCreatePasta{
+				{Message: "First message", Visibility: "private"},
+				{Message: "Second message", Visibility: "private"},
+				{Message: "Third message"},
+			},
+			expectedStatus: 200,
+			query:          "?search=message",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SearchedPastas, hashs []string) {
+				require.Len(t, hashs, 1)
+				require.Equal(t, hashs[0], strings.TrimPrefix(resp.Pastas[0], UrlForGet))
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(func() {
-				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.Elastic, testApp.Bucket, testApp.Index)
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
 			})
 
 			ctx := t.Context()
@@ -1456,7 +1501,9 @@ func TestSearchPastaHandle(t *testing.T) {
 				for _, pasta := range tt.testsPasta {
 					p, err := testApp.Services.Pasta.Create(ctx, &pasta, 0)
 					require.NoError(t, err)
-					hashs = append(hashs, p.Hash)
+					if pasta.Visibility != "private" {
+						hashs = append(hashs, p.Hash)
+					}
 				}
 			}
 			url := "/search" + tt.query
@@ -1474,4 +1521,569 @@ func TestSearchPastaHandle(t *testing.T) {
 			tt.checkResponse(t, w, resp, hashs)
 		})
 	}
+}
+
+func TestUpdatePastaHandler(t *testing.T) {
+	tests := []struct {
+		name          string
+		withPasta     bool
+		testPastas    TestPastaWithUserID
+		withAuth      bool
+		userIDForAuth int
+
+		inputBody      dto.UpdateRequest
+		expectedStatus int
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SuccessUpdatedPastaResponse, createdPasta *dto.TextsWithMetadata)
+	}{
+		{
+			name:      "Success",
+			withPasta: true,
+			testPastas: TestPastaWithUserID{
+				Pasta: dto.RequestCreatePasta{
+					Message: "Message before update",
+				},
+				UserID: 1,
+			},
+			withAuth:      true,
+			userIDForAuth: 1,
+			inputBody: dto.UpdateRequest{
+				NewText: "Message after update",
+			},
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SuccessUpdatedPastaResponse, createdPasta *dto.TextsWithMetadata) {
+				require.NotEqual(t, resp.Metadata.Size, createdPasta.Metadata.Size)
+
+				require.Equal(t, resp.Metadata.Visibility, createdPasta.Metadata.Visibility)
+				require.Equal(t, resp.Metadata.Views, createdPasta.Metadata.Views)
+				require.Equal(t, resp.Metadata.UserID, createdPasta.Metadata.UserID)
+				require.Equal(t, resp.Metadata.ObjectID, createdPasta.Metadata.ObjectID)
+				require.Equal(t, resp.Metadata.Language, createdPasta.Metadata.Language)
+				require.Equal(t, resp.Metadata.ID, createdPasta.Metadata.ID)
+				require.Equal(t, resp.Metadata.Hash, createdPasta.Metadata.Hash)
+				require.Equal(t, resp.Metadata.ID, createdPasta.Metadata.ID)
+
+				require.NotEqual(t, resp.Message, createdPasta.Text)
+				s3message, err := testApp.repos.S3.Get(t.Context(), resp.Metadata.ObjectID)
+				require.NoError(t, err)
+				require.Equal(t, s3message, "Message after update")
+
+				elasticMessage, err := testApp.repos.Elastic.SearchWord("after")
+				require.NoError(t, err)
+				require.Equal(t, elasticMessage[0], resp.Metadata.ObjectID)
+			},
+		},
+		{
+			name:          "Pasta Not Found",
+			withAuth:      true,
+			userIDForAuth: 1,
+			inputBody: dto.UpdateRequest{
+				NewText: "Message after update",
+			},
+			expectedStatus: 404,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SuccessUpdatedPastaResponse, createdPasta *dto.TextsWithMetadata) {
+				require.Contains(t, w.Body.String(), customerrors.ErrPastaNotFound.Error())
+			},
+		},
+		{
+			name:      "No Access",
+			withPasta: true,
+			testPastas: TestPastaWithUserID{
+				Pasta: dto.RequestCreatePasta{
+					Message: "Before update",
+				},
+				UserID: 1,
+			},
+			withAuth:      true,
+			userIDForAuth: 2,
+			inputBody: dto.UpdateRequest{
+				NewText: "Message after update",
+			},
+			expectedStatus: 403,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.SuccessUpdatedPastaResponse, createdPasta *dto.TextsWithMetadata) {
+				require.Contains(t, w.Body.String(), customerrors.ErrNoAccess.Error())
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			body, err := json.Marshal(tt.inputBody)
+			require.NoError(t, err)
+
+			ctx := t.Context()
+
+			pasta := &models.Pasta{}
+			if tt.withPasta {
+				var err error
+				pasta, err = testApp.Services.Pasta.Create(ctx, &tt.testPastas.Pasta, tt.testPastas.UserID)
+				require.NoError(t, err)
+			}
+
+			url := "/update/" + pasta.Hash
+			if pasta.Hash == "" {
+				url += "nothing"
+			}
+
+			req := httptest.NewRequest(http.MethodPut, url, bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			if tt.withAuth {
+				token, err := utils.GenerateTestJWT(tt.userIDForAuth)
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			var resp dto.SuccessUpdatedPastaResponse
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+			require.Equal(t, tt.expectedStatus, w.Code)
+			tt.checkResponse(t, w, &resp, &dto.TextsWithMetadata{Text: tt.testPastas.Pasta.Message, Metadata: pasta})
+		})
+	}
+}
+
+func TestCreateFavorite(t *testing.T) {
+	tests := []struct {
+		name           string
+		withPasta      bool
+		testPasta      TestPastaWithUserID
+		withAuth       bool
+		userForAuth    int
+		expectedStatus int
+		query          string
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder, metadata *models.Pasta)
+	}{
+		{
+			name:      "Success",
+			withPasta: true,
+			testPasta: TestPastaWithUserID{
+				Pasta: dto.RequestCreatePasta{
+					Message: "First message",
+				},
+				UserID: 1,
+			},
+			withAuth:       true,
+			userForAuth:    1,
+			expectedStatus: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, metadata *models.Pasta) {
+				require.Contains(t, w.Body.String(), "Successfully created")
+
+				hash, err := testApp.repos.Database.Pasta().GetFavoriteAndCheckUser(t.Context(), 1, 1)
+				require.NoError(t, err)
+
+				require.Equal(t, metadata.Hash, hash)
+			},
+		},
+		{
+			name:      "Non Allowed",
+			withPasta: true,
+			testPasta: TestPastaWithUserID{
+				Pasta: dto.RequestCreatePasta{
+					Message:    "First message",
+					Visibility: "private",
+				},
+				UserID: 1,
+			},
+			withAuth:       true,
+			userForAuth:    1,
+			expectedStatus: 400,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, metadata *models.Pasta) {
+				require.Contains(t, w.Body.String(), customerrors.ErrNotAllowed.Error())
+			},
+		},
+		{
+			name:           "Pasta Not Found",
+			withAuth:       true,
+			userForAuth:    1,
+			expectedStatus: 404,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, metadata *models.Pasta) {
+				require.Contains(t, w.Body.String(), customerrors.ErrPastaNotFound.Error())
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			ctx := t.Context()
+
+			pasta := &models.Pasta{}
+			if tt.withPasta {
+				var err error
+				pasta, err = testApp.Services.Pasta.Create(ctx, &tt.testPasta.Pasta, tt.testPasta.UserID)
+				require.NoError(t, err)
+
+			} else {
+				pasta.Hash = "nothing"
+			}
+
+			url := "/favorite/create/" + pasta.Hash
+			if tt.query != "" {
+				url += tt.query
+			}
+
+			req := httptest.NewRequest(http.MethodPost, url, nil)
+			req.Header.Set("Content-Type", "application/json")
+
+			if tt.withAuth {
+				token, err := utils.GenerateTestJWT(tt.userForAuth)
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+
+				require.NoError(t, testUser(ctx, tt.testPasta.UserID))
+			}
+
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			require.Equal(t, tt.expectedStatus, tt.expectedStatus)
+			tt.checkResponse(t, w, pasta)
+		})
+	}
+}
+
+type testGetFavorite struct {
+	Pasta      dto.RequestCreatePasta
+	UserID     int
+	FavoriteID int
+}
+
+func TestGetFavorite(t *testing.T) {
+	tests := []struct {
+		name          string
+		withPasta     bool
+		testPasta     testGetFavorite
+		withAuth      bool
+		userForAuth   int
+		expectedCode  int
+		query         string
+		checkResponse func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.GetPastaResponse, createdPasta *dto.TextsWithMetadata)
+	}{
+		{
+			name:      "Success",
+			withPasta: true,
+			testPasta: testGetFavorite{
+				Pasta: dto.RequestCreatePasta{
+					Message: "Test message",
+				},
+				UserID:     1,
+				FavoriteID: 1,
+			},
+			withAuth:     true,
+			userForAuth:  1,
+			expectedCode: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.GetPastaResponse, createdPasta *dto.TextsWithMetadata) {
+				require.Equal(t, resp.Text, createdPasta.Text)
+				require.Empty(t, resp.Metadata)
+			},
+		},
+		{
+			name:      "Success with metadata",
+			withPasta: true,
+			testPasta: testGetFavorite{
+				Pasta: dto.RequestCreatePasta{
+					Message: "Test message",
+				},
+				UserID:     1,
+				FavoriteID: 1,
+			},
+			withAuth:     true,
+			userForAuth:  1,
+			expectedCode: 200,
+			query:        "?metadata=true",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.GetPastaResponse, createdPasta *dto.TextsWithMetadata) {
+				require.Equal(t, resp.Text, createdPasta.Text)
+				require.NotEmpty(t, resp.Metadata)
+			},
+		},
+		{
+			name:         "Pasta Not Found",
+			withAuth:     true,
+			userForAuth:  1,
+			expectedCode: 400,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.GetPastaResponse, createdPasta *dto.TextsWithMetadata) {
+				require.Contains(t, w.Body.String(), customerrors.ErrNotAllowed.Error())
+			},
+		},
+		{
+			name:      "Not Allowed",
+			withPasta: true,
+			testPasta: testGetFavorite{
+				Pasta: dto.RequestCreatePasta{
+					Message: "Test message",
+				},
+				UserID:     1,
+				FavoriteID: 1,
+			},
+			withAuth:     true,
+			userForAuth:  2,
+			expectedCode: 400,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.GetPastaResponse, createdPasta *dto.TextsWithMetadata) {
+				require.Contains(t, w.Body.String(), customerrors.ErrNotAllowed.Error())
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			ctx := t.Context()
+
+			pasta := &models.Pasta{}
+			if tt.withPasta {
+				var err error
+				pasta, err = testApp.Services.Pasta.Create(ctx, &tt.testPasta.Pasta, tt.testPasta.UserID)
+				require.NoError(t, err)
+
+				require.NoError(t, testUser(ctx, tt.testPasta.UserID))
+
+				require.NoError(t, testApp.repos.Database.Pasta().Favorite(ctx, pasta.Hash, tt.testPasta.UserID))
+			}
+
+			url := fmt.Sprintf("/favorite/%d", tt.testPasta.FavoriteID)
+			if tt.query != "" {
+				url += tt.query
+			}
+
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+
+			if tt.withAuth {
+				token, err := utils.GenerateTestJWT(tt.userForAuth)
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			resp := &dto.GetPastaResponse{}
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+			require.Equal(t, tt.expectedCode, w.Code)
+			tt.checkResponse(t, w, resp, &dto.TextsWithMetadata{
+				Text:     tt.testPasta.Pasta.Message,
+				Metadata: pasta,
+			})
+		})
+	}
+}
+
+func TestDeleteFavorite(t *testing.T) {
+	tests := []struct {
+		name          string
+		withPasta     bool
+		testPasta     testGetFavorite
+		withAuth      bool
+		userForAuth   int
+		expectedCode  int
+		checkResponse func(t *testing.T, w *httptest.ResponseRecorder, createdPasta *dto.TextsWithMetadata)
+	}{
+		{
+			name:      "Success",
+			withPasta: true,
+			testPasta: testGetFavorite{
+				Pasta: dto.RequestCreatePasta{
+					Message: "Message",
+				},
+				UserID:     1,
+				FavoriteID: 1,
+			},
+			withAuth:     true,
+			userForAuth:  1,
+			expectedCode: 200,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, createdPasta *dto.TextsWithMetadata) {
+				require.Contains(t, w.Body.String(), "Successfully deleted")
+
+				exists, err := isFavoriteExists(t.Context())
+				require.NoError(t, err)
+				require.False(t, exists)
+			},
+		},
+		{
+			name:         "Pasta Not Found",
+			withAuth:     true,
+			userForAuth:  1,
+			expectedCode: 400,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, createdPasta *dto.TextsWithMetadata) {
+				require.Contains(t, w.Body.String(), customerrors.ErrNotAllowed.Error())
+			},
+		},
+		{
+			name:      "Wrong User",
+			withPasta: true,
+			testPasta: testGetFavorite{
+				Pasta: dto.RequestCreatePasta{
+					Message: "Message",
+				},
+				UserID:     1,
+				FavoriteID: 1,
+			},
+			withAuth:     true,
+			userForAuth:  2,
+			expectedCode: 400,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, createdPasta *dto.TextsWithMetadata) {
+				require.Contains(t, w.Body.String(), customerrors.ErrNotAllowed.Error())
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			ctx := t.Context()
+
+			pasta := &models.Pasta{}
+			if tt.withPasta {
+				var err error
+				pasta, err = testApp.Services.Pasta.Create(ctx, &tt.testPasta.Pasta, tt.testPasta.UserID)
+				require.NoError(t, err)
+
+				require.NoError(t, testUser(ctx, tt.testPasta.UserID))
+
+				require.NoError(t, testApp.repos.Database.Pasta().Favorite(ctx, pasta.Hash, tt.testPasta.UserID))
+			}
+
+			url := fmt.Sprintf("/favorite/%d", tt.testPasta.FavoriteID)
+
+			req := httptest.NewRequest(http.MethodDelete, url, nil)
+
+			if tt.withAuth {
+				token, err := utils.GenerateTestJWT(tt.userForAuth)
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			resp := &dto.GetPastaResponse{}
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+			require.Equal(t, tt.expectedCode, w.Code)
+			tt.checkResponse(t, w, &dto.TextsWithMetadata{
+				Text:     tt.testPasta.Pasta.Message,
+				Metadata: pasta,
+			})
+		})
+	}
+}
+
+func TestPaginateFavorite(t *testing.T) {
+	tests := []struct {
+		name           string
+		withPastas     bool
+		testPastas     []testGetFavorite
+		users          int
+		favoriteCreate func(t *testing.T, forCreate map[string]string)
+		withAuth       bool
+		userForAuth    int
+		expectedCode   int
+		query          string
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO)
+	}{
+		{
+			name:       "Success",
+			withPastas: true,
+			testPastas: []testGetFavorite{
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "First Message",
+					},
+					UserID: 1,
+				},
+				{
+					Pasta: dto.RequestCreatePasta{
+						Message: "Second Message",
+					},
+					UserID: 1,
+				},
+			},
+			users: 2,
+			favoriteCreate: func(t *testing.T, forCreate map[string]string) {
+				require.NoError(t, testApp.repos.Database.Pasta().Favorite(t.Context(), forCreate["First Message"], 2))
+			},
+			withAuth:     true,
+			userForAuth:  2,
+			expectedCode: 200,
+			query:        "?limit=10&page=1",
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, resp *dto.PaginatedPastaDTO) {
+				require.Len(t, resp.Pastas, 1)
+				require.Equal(t, 1, resp.Total)
+				require.Equal(t, 10, resp.Limit)
+				require.Equal(t, 1, resp.Page)
+
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				cleanupAll(t, testApp.Postgres, testApp.Redis, testApp.Minio, testApp.ElasticService, testApp.Elastic, testApp.Bucket, testApp.Index)
+			})
+
+			ctx := t.Context()
+
+			if tt.withPastas {
+				for i := 1; i <= tt.users; i++ {
+					require.NoError(t, testUser(ctx, i))
+				}
+
+				forCreateMap := map[string]string{}
+
+				for _, pasta := range tt.testPastas {
+					p, err := testApp.Services.Pasta.Create(ctx, &pasta.Pasta, pasta.UserID)
+					require.NoError(t, err)
+
+					forCreateMap[pasta.Pasta.Message] = p.Hash
+				}
+
+				tt.favoriteCreate(t, forCreateMap)
+			}
+
+			url := "/favorite/paginate"
+			if tt.query != "" {
+				url += tt.query
+			}
+
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+
+			if tt.withAuth {
+				token, err := utils.GenerateTestJWT(tt.userForAuth)
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+
+			w := httptest.NewRecorder()
+			testApp.Engine.ServeHTTP(w, req)
+
+			resp := &dto.PaginatedPastaDTO{}
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+			require.Equal(t, tt.expectedCode, w.Code, w.Body.String())
+			tt.checkResponse(t, w, resp)
+		})
+	}
+}
+
+func isFavoriteExists(ctx context.Context) (bool, error) {
+	exists := false
+	err := testApp.Postgres.GetContext(ctx, &exists, "SELECT EXISTS(SELECT 1 FROM favorites)")
+	return exists, err
+}
+
+func testUser(ctx context.Context, userID int) error {
+	_, err := testApp.Postgres.ExecContext(ctx, "INSERT INTO users (name, email, password_hash) VALUES($1, $2, $3)", fmt.Sprintf("test%d", userID), fmt.Sprintf("test%d", userID), fmt.Sprintf("test%d", userID))
+	return err
 }

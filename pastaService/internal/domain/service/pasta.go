@@ -25,7 +25,7 @@ type Pasta interface {
 	PaginateOnlyPublic(ctx context.Context, rawLimit, rawPage string, hasMetadata bool) (*dto.PaginatedPastaDTO, error)
 	PaginateForUserByID(ctx context.Context, rawLimit, rawPage string, userID int, hasMetadata bool) (*dto.PaginatedPastaDTO, error)
 
-	Favorite(ctx context.Context, hash, visibility string, userID int) error
+	Favorite(ctx context.Context, hash string, userID int) error
 	GetFavorite(ctx context.Context, userID, favoriteID int, withMetadata bool) (*models.PastaWithData, error)
 	DeleteFavorite(ctx context.Context, userID, favoriteID int) error
 

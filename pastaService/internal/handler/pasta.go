@@ -243,7 +243,7 @@ func (h *Handler) SearchHandler(c *gin.Context) {
 	result, err := h.servises.Pasta.Search(ctx, word)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrEmptySearchField) {
-			c.JSON(404, gin.H{"status": customerrors.ErrEmptySearchField.Error()})
+			c.JSON(400, gin.H{"status": customerrors.ErrEmptySearchField.Error()})
 		} else if errors.Is(err, customerrors.ErrEmptySearchResult) {
 			c.JSON(200, gin.H{"status": customerrors.ErrEmptySearchResult.Error()})
 		} else {
@@ -316,13 +316,6 @@ func (h *Handler) UpdateHandler(c *gin.Context) {
 func (h *Handler) CreateFavorite(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	visibility, err := h.GetVisibility(c)
-	if errors.Is(err, customerrors.ErrInternal) {
-		h.logger.Error("Internal server error during getting visibility from context", logging.ErrAttr(err))
-		c.JSON(500, gin.H{"error": customerrors.ErrInternal.Error()})
-		return
-	}
-
 	userID, err := h.GetUserID(c)
 	if errors.Is(err, customerrors.ErrInternal) {
 		h.logger.Error("Internal server error during getting userID from context", logging.ErrAttr(err))
@@ -332,7 +325,7 @@ func (h *Handler) CreateFavorite(c *gin.Context) {
 
 	hash := c.Param("hash")
 
-	err = h.servises.Pasta.Favorite(ctx, hash, visibility, userID)
+	err = h.servises.Pasta.Favorite(ctx, hash, userID)
 	if err != nil {
 		if errors.Is(err, customerrors.ErrNotAllowed) {
 			c.JSON(400, gin.H{"error": customerrors.ErrNotAllowed.Error()})
@@ -372,9 +365,7 @@ func (h *Handler) GetFavorite(c *gin.Context) {
 
 	pasta, err := h.servises.Pasta.GetFavorite(ctx, userID, favoriteID, withMetadata)
 	if err != nil {
-		if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
-		} else if errors.Is(err, customerrors.ErrNotAllowed) {
+		if errors.Is(err, customerrors.ErrNotAllowed) {
 			c.JSON(400, gin.H{"error": customerrors.ErrNotAllowed.Error()})
 		} else {
 			h.logger.Error("Internal server error during get favorite", logging.ErrAttr(err))
@@ -410,9 +401,7 @@ func (h *Handler) DeleteFavorite(c *gin.Context) {
 
 	err = h.servises.Pasta.DeleteFavorite(ctx, userID, favoriteID)
 	if err != nil {
-		if errors.Is(err, customerrors.ErrPastaNotFound) {
-			c.JSON(404, gin.H{"error": customerrors.ErrPastaNotFound.Error()})
-		} else if errors.Is(err, customerrors.ErrNotAllowed) {
+		if errors.Is(err, customerrors.ErrNotAllowed) {
 			c.JSON(400, gin.H{"error": customerrors.ErrNotAllowed.Error()})
 		} else {
 			h.logger.Error("Internal server error during delete favorite", logging.ErrAttr(err))
@@ -454,5 +443,6 @@ func (h *Handler) PaginateFavorites(c *gin.Context) {
 		}
 		return
 	}
+	h.logger.Debug("paginatedPasta", logging.AnyAttr("result", paginatedPasta))
 	c.JSON(200, paginatedPasta)
 }

@@ -359,8 +359,8 @@ func (m *pastaDatabase) Favorite(ctx context.Context, hash string, id int) error
 func (m *pastaDatabase) GetFavoriteAndCheckUser(ctx context.Context, userID, favoriteID int) (string, error) {
 	query := `
 		SELECT p.hash
-		FROM pastas p
-		JOIN favorites f ON f.pasta_id = p.id
+		FROM favorites f
+		JOIN pastas p ON f.pasta_id = p.id
 		WHERE f.id = $1 AND f.user_id = $2
 	`
 
@@ -368,7 +368,7 @@ func (m *pastaDatabase) GetFavoriteAndCheckUser(ctx context.Context, userID, fav
 	err := m.db.QueryRowContext(ctx, query, favoriteID, userID).Scan(&hash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", customerrors.ErrPastaNotFound
+			return "", customerrors.ErrNotAllowed
 		}
 		return "", err
 	}
@@ -376,26 +376,20 @@ func (m *pastaDatabase) GetFavoriteAndCheckUser(ctx context.Context, userID, fav
 }
 
 func (m *pastaDatabase) DeleteFavorite(ctx context.Context, userID, favoriteID int) error {
-
 	query := `
-		SELECT user_id FROM favorites WHERE id = $1
+		DELETE FROM favorites 
+		WHERE id = $1 AND user_id = $2
+		RETURNING id
 	`
-	var userIDfromDB int
-	err := m.db.GetContext(ctx, &userIDfromDB, query, favoriteID)
+
+	var deletedID int
+	err := m.db.GetContext(ctx, &deletedID, query, favoriteID, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return customerrors.ErrPastaNotFound
+			return customerrors.ErrNotAllowed
 		}
 		return err
 	}
 
-	if userIDfromDB != userID {
-		return customerrors.ErrNotAllowed
-	}
-
-	query = `
-		DELETE FROM favorites WHERE id = $1
-	`
-	_, err = m.db.ExecContext(ctx, query, favoriteID)
-	return err
+	return nil
 }
