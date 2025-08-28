@@ -1,0 +1,14 @@
+app:
+  mode: debug # debug or release
+  port: 10001
+  jwt_secret: 13287kjKNAskndq!*&8721632xkads239421931hfdsakfn3212
+  jwt_access_ttl: 15m
+  jwt_refresh_ttl: 24h
+
+storage:
+  host: db
+  port: 5432
+  username: postgres
+  dbname: pastas
+  password: qwerty123
+  sslmode: disable

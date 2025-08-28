@@ -1,0 +1,56 @@
+app:
+  mode: debug # debug or release
+  port: 10002
+  jwt_secret: 13287kjKNAskndq!*&8721632xkads239421931hfdsakfn3212
+
+storage:
+  host: db
+  port: 5432
+  username: postgres
+  dbname: pastas
+  password: qwerty123
+  sslmode: disable
+
+minio:
+  addr: minio1:9000 # кворум на большее
+  bucket: pastas
+  root_user: colorvax
+  root_password: colorvax_super
+  max_idle_conns: 100
+  idle_conn_timeout: 30s
+  max_retries: 3
+  ssl: false
+
+redis:
+  mode: standalone # cluster or standalone
+  addr: redis:6379
+  addrs: 
+    - redis1:7000
+    - redis2:7001
+    - redis3:7002
+    - redis4:7003
+    - redis5:7004
+    - redis6:7005
+  password: "qwerty"
+  dial_timeout: 5s
+  read_timeout: 5s
+  write_timeout: 5s
+  pool_size: 50
+  max_retries: 3
+
+elastic:
+  mode: standalone # cluster or standalone
+  addr: http://elasticsearch:9200
+  addrs:
+    - http://elasticsearch1:9200
+    - http://elasticsearch2:9200
+    - http://elasticsearch3:9200
+  username: root
+  password: root_password
+  retry_on_status: 
+    - 502
+    - 503
+    - 504
+  max_retries: 3
+  compress_request_body: true
+  index: pastas

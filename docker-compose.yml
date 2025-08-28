@@ -1,0 +1,209 @@
+x-logging: &logging
+  logging:
+    driver: "fluentd"
+    options:
+      tag: "{{.ImageName}}.{{.Name}}|{{.ImageFullID}}|{{.FullID}}"
+      fluentd-address: "localhost:24224"
+
+x-common-minio: &common-minio
+  image: minio/minio:latest
+  restart: unless-stopped
+  environment:
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  command:
+    ["server", "/data", "--console-address", ":9001"]
+  healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+  networks:
+    - pastebin-light
+
+x-common-elasticsearch: &common-elasticsearch
+  image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
+  restart: unless-stopped
+  environment:
+    - "bootstrap.memory_lock=true"
+    - "cluster.name=es-cluster"
+    - "discovery.type=single-node"
+    - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    - xpack.security.enabled=false
+    - ingest.geoip.downloader.enabled=false
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 30
+  ulimits:
+    memlock:
+      soft: -1
+      hard: -1
+  networks:
+    - pastebin-light
+
+services:
+  auth:
+    container_name: auth
+    build:
+      context: ./authService
+      dockerfile: Dockerfile
+    <<: *logging
+    ports:
+      - "10001:10001"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./authService/config.yml:/app/config.yml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10001/health"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
+    networks:
+      - pastebin-light
+
+  pastas:
+    build:
+      context: ./pastaService
+      dockerfile: Dockerfile
+    container_name: pastas
+    <<: *logging
+    ports:
+      - "10002:10002"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio1:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./pastaService/config.yml:/app/config.yml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10002/health"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
+    networks:
+      - pastebin-light
+
+  db:
+    container_name: postgres
+    image: postgres:latest
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data/pgdata
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pastebin-light
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "7000:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - pastebin-light
+
+  minio1:
+    <<: *common-minio
+    container_name: minio1
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  elasticsearch:
+    <<: *common-elasticsearch
+    container_name: elasticsearch
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+
+  fluentd:
+    build:
+      context: ./setup/fluentd/
+    container_name: fluentd
+    restart: always
+    volumes:
+      - ./setup/fluentd/fluentd.conf:/fluentd/etc/fluent.conf
+    ports:
+     - "127.0.0.1:24224:24224"
+     - "127.0.0.1:24224:24224/udp"
+     - "127.0.0.1:9292:9292"
+    networks:
+      - pastebin-light
+
+  opensearch:
+    image: opensearchproject/opensearch:latest
+    container_name: opensearch
+    restart: always
+    environment:
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - cluster.name=opensearch-cluster
+      - network.host=0.0.0.0
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=MyS3cretPassw0rd!321dfaskdasldwqo
+    ulimits:
+      memlock:
+        soft: -1 
+        hard: -1
+      nofile:
+        soft: 65536 
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks:
+      - pastebin-light
+
+  opensearch-dashboards:
+    build:
+      context: ./setup/opensearch-dashboards/
+    container_name: opensearch-dashboards
+    restart: always
+    ports:
+      - "127.0.0.1:5601:5601"
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+    networks:
+      - pastebin-light
+
+volumes:
+  pgdata:
+  minio_data:
+  es-data:
+  opensearch-data:
+
+networks:
+  pastebin-light:
+    name: pastebin-light
+    driver: bridge
